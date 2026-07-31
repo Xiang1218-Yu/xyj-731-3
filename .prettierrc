@@ -1,0 +1,25 @@
+{
+  "arrowParens": "avoid",
+  "endOfLine": "lf",
+  "printWidth": 80,
+  "semi": true,
+  "tabWidth": 2,
+  "trailingComma": "es5",
+  "useTabs": false,
+
+  "overrides": [
+    {
+      "files": ["tsconfig.json", ".prettierrc"],
+      "options": {
+        "parser": "json"
+      }
+    },
+    {
+      "files": ["**/*.html"],
+      "options": {
+        "parser": "html",
+        "printWidth": 160
+      }
+    }
+  ]
+}
