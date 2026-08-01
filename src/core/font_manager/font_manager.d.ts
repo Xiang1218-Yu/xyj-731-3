@@ -29,10 +29,21 @@ export declare class FontManager {
     /** 获取全局唯一实例（首次调用时创建）。 */
     static getInstance(): FontManager;
     /**
-     * 重置单例（清空全部缓存、监听器与配置）。
+     * 重置单例：先对旧实例执行 `dispose()`（清空事件监听器、全部缓存
+     * 与 in-flight 表），再丢弃引用。
      * 仅供单元测试隔离使用，生产代码不应调用。
      */
     static resetInstance(): void;
+    /**
+     * 释放本实例持有的全部资源：
+     * - 清空事件总线上的全部监听器（避免旧实例被残留监听器引用而无法回收）；
+     * - 清空全部资源缓存；
+     * - 清空标准字体加载的 in-flight 表与 CMap 加载器的内部状态。
+     *
+     * 调用后本实例不应再被使用（已有引用它的旧代码仍可安全调用，
+     * 但相当于操作一个空的独立实例）。
+     */
+    dispose(): void;
     /** 注册默认的内置 CMap 取数器。 */
     registerCMapFetcher(fetcher: BuiltInCMapFetcher): void;
     /**

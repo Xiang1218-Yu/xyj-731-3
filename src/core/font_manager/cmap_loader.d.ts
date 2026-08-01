@@ -74,4 +74,10 @@ export declare class AsyncCMapLoader {
      * @param fetcher 可选取数器，语义同 `load`。
      */
     preload(config?: CMapPreloadConfig | null, fetcher?: BuiltInCMapFetcher): Promise<void>;
+    /**
+     * 释放加载器内部状态：清空 in-flight 表、预加载指纹与默认取数器。
+     * 由 `FontManager.dispose` 调用；进行中的加载 Promise 仍会正常
+     * 落定（其结果写入的缓存随 FontManager 一并释放，无副作用）。
+     */
+    dispose(): void;
 }

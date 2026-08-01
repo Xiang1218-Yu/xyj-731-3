@@ -82,8 +82,18 @@ export class AsyncCMapLoader {
   /**
    * 已执行过的预加载指纹（策略 + 名单的序列化结果）。
    * 用于让重复的 `preload` 调用幂等，避免每个 CMap 加载都触发一轮预取。
+   * 注意：只有一轮预加载“全部成功”才会记录指纹；存在失败项时
+   * 不记录，允许后续调用重试失败项（成功项会命中缓存，开销极小）。
    */
   #preloadedKey: string | null = null;
+
+  /**
+   * 正在执行的预加载轮次（Promise）。
+   * 用于消除“预加载与预加载 / 预加载与主加载”之间的竞争：
+   * 并发 `preload` 调用先等待进行中的轮次结束再决定是否执行，
+   * 避免两轮预加载交错并发、冲击同一取数器。
+   */
+  #preloadInFlight: Promise<void> | null = null;
 
   constructor(options: AsyncCMapLoaderOptions) {
     this.#cache = options.cache;
@@ -168,11 +178,15 @@ export class AsyncCMapLoader {
       }
     );
     this.#inFlight.set(name, promise);
-    try {
-      return await promise;
-    } finally {
+    // 清理与调用方解耦：无论成功或失败、无论等待方是谁，
+    // Promise 落定后都必须从 in-flight 表移除，杜绝失败时残留。
+    // （用 then(cleanup, cleanup) 而非 .finally()，避免派生 Promise
+    //   的拒绝无人处理而产生 unhandledrejection。）
+    const cleanup = (): void => {
       this.#inFlight.delete(name);
-    }
+    };
+    promise.then(cleanup, cleanup);
+    return await promise;
   }
 
   /**
@@ -198,8 +212,36 @@ export class AsyncCMapLoader {
     if (this.#preloadedKey === key) {
       return; // 相同配置已预加载过，幂等返回。
     }
-    this.#preloadedKey = key;
+    // 竞争消除：若已有预加载轮次在进行（可能来自另一个文档/调用方），
+    // 先等待其结束，再按最新缓存状态决定是否仍需执行本轮，
+    // 避免两轮预加载交错并发、对同一取数器造成重复压力。
+    if (this.#preloadInFlight) {
+      await this.#preloadInFlight;
+      if (this.#preloadedKey === key) {
+        return;
+      }
+    }
 
+    const round = this.#runPreloadRound(names, fetcher);
+    this.#preloadInFlight = round.then(() => undefined);
+    try {
+      const failed = await round;
+      // 只有全部成功才记录指纹：存在失败项时允许后续调用重试。
+      if (failed.length === 0) {
+        this.#preloadedKey = key;
+      }
+    } finally {
+      this.#preloadInFlight = null;
+    }
+  }
+
+  /**
+   * 执行一轮串行预加载，返回失败名单（内部捕获全部失败，绝不抛出）。
+   */
+  async #runPreloadRound(
+    names: readonly string[],
+    fetcher?: BuiltInCMapFetcher
+  ): Promise<string[]> {
     this.#events.emit("cmap:preload:start", { names });
     const succeeded: string[] = [];
     const failed: string[] = [];
@@ -213,6 +255,19 @@ export class AsyncCMapLoader {
       }
     }
     this.#events.emit("cmap:preload:done", { succeeded, failed });
+    return failed;
+  }
+
+  /**
+   * 释放加载器内部状态：清空 in-flight 表、预加载指纹与默认取数器。
+   * 由 `FontManager.dispose` 调用；进行中的加载 Promise 仍会正常
+   * 落定（其结果写入的缓存随 FontManager 一并释放，无副作用）。
+   */
+  dispose(): void {
+    this.#inFlight.clear();
+    this.#preloadInFlight = null;
+    this.#preloadedKey = null;
+    this.#fetcher = null;
   }
 
   /**

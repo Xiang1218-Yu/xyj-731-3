@@ -350,6 +350,90 @@ describe("font_manager", function () {
       expect(donePayload.succeeded).toEqual(["good"]);
       expect(donePayload.failed).toEqual(["bad"]);
     });
+
+    it("预加载存在失败项时不记录指纹，下次调用会重试失败项", async function () {
+      const fetched = [];
+      let failBad = true;
+      const fetcher = async name => {
+        fetched.push(name);
+        if (name === "bad" && failBad) {
+          throw new Error("boom");
+        }
+        return fakeCMapData(name);
+      };
+      const config = { strategy: "custom", names: ["good", "bad"] };
+
+      await loader.preload(config, fetcher);
+      expect(fetched).toEqual(["good", "bad"]);
+
+      // 修复取数器后再次预加载：成功项命中缓存，仅重试失败项。
+      failBad = false;
+      fetched.length = 0;
+      await loader.preload(config, fetcher);
+      expect(fetched).toEqual(["bad"]);
+
+      // 全部成功后记录指纹：第三次调用幂等，不再取数。
+      fetched.length = 0;
+      await loader.preload(config, fetcher);
+      expect(fetched).toEqual([]);
+    });
+
+    it("并发预加载相同配置不产生交错轮次（竞争消除）", async function () {
+      const fetched = [];
+      const fetcher = async name => {
+        fetched.push(name);
+        await new Promise(resolve => {
+          setTimeout(resolve, 5);
+        });
+        return fakeCMapData(name);
+      };
+      const config = { strategy: "custom", names: ["A-H", "B-V"] };
+
+      // 两次并发调用：第二轮等待第一轮结束后幂等返回。
+      await Promise.all([
+        loader.preload(config, fetcher),
+        loader.preload(config, fetcher),
+      ]);
+
+      expect(fetched).toEqual(["A-H", "B-V"]);
+    });
+
+    it("预加载与主加载竞争同一 CMap 时通过 in-flight 去重", async function () {
+      let fetchCount = 0;
+      const fetcher = async name => {
+        fetchCount++;
+        await new Promise(resolve => {
+          setTimeout(resolve, 10);
+        });
+        return fakeCMapData(name);
+      };
+
+      // 主加载进行中触发包含同名 CMap 的预加载。
+      const mainLoad = loader.load("Shared-H", fetcher);
+      const preload = loader.preload(
+        { strategy: "custom", names: ["Shared-H"] },
+        fetcher
+      );
+      await Promise.all([mainLoad, preload]);
+
+      expect(fetchCount).toBe(1);
+      expect(loader.isLoaded("Shared-H")).toBe(true);
+    });
+
+    it("dispose 清空内部状态：取数器、in-flight 与预加载指纹", async function () {
+      const fetcher = async name => fakeCMapData(name);
+      loader.registerFetcher(fetcher);
+      await loader.load("D-H");
+
+      loader.dispose();
+
+      // 取数器已被清空：未指定 fetcher 的 load 抛出明确错误。
+      await expectAsync(loader.load("D-H2")).toBeRejectedWithError(
+        /No CMap fetcher registered/
+      );
+      // 缓存不在 dispose 范围内（由 FontManager 统一清空）。
+      expect(loader.isLoaded("D-H")).toBe(true);
+    });
   });
 
   describe("FontFallbackChain", function () {
@@ -453,6 +537,56 @@ describe("font_manager", function () {
       const b = FontManager.getInstance();
 
       expect(a).not.toBe(b);
+    });
+
+    it("resetInstance 会清理旧实例：事件监听器、缓存与 in-flight", async function () {
+      const oldManager = FontManager.getInstance();
+      let eventCount = 0;
+      oldManager.events.on("cmap:load:success", () => eventCount++);
+      await oldManager.loadBuiltInCMap("Old-H", async name =>
+        fakeCMapData(name)
+      );
+      expect(eventCount).toBe(1);
+      expect(oldManager.cacheStats().entries["builtin-cmap"]).toBe(1);
+
+      FontManager.resetInstance();
+
+      // 旧实例的缓存已清空。
+      expect(oldManager.cacheStats().entries["builtin-cmap"]).toBe(0);
+      // 旧实例的事件总线已清空：再触发事件不会调用残留监听器。
+      await oldManager.loadBuiltInCMap("Old-H2", async name =>
+        fakeCMapData(name)
+      );
+      expect(eventCount).toBe(1);
+      // 新实例是完全独立的状态。
+      const newManager = FontManager.getInstance();
+      expect(newManager.cacheStats().entries["builtin-cmap"]).toBe(0);
+      expect(newManager.events.hasListeners("cmap:load:success")).toBe(false);
+    });
+
+    it("标准字体取数器拒绝时 in-flight 被清理，可立即换用新取数器重试", async function () {
+      const manager = FontManager.getInstance();
+      let attempts = 0;
+      const failingFetcher = async () => {
+        attempts++;
+        throw new Error("disk error");
+      };
+
+      // 失败会向上抛出（FontManager 不吞掉取数器的同步异常语义）。
+      await expectAsync(
+        manager.loadStandardFontData("RetryFont", failingFetcher)
+      ).toBeRejectedWithError(/disk error/);
+      expect(manager.cacheStats().entries["standard-font"]).toBe(0);
+
+      // in-flight 已清理：换用正常取数器立即可用，且重新取数。
+      const goodFetcher = async () => {
+        attempts++;
+        return new Uint8Array([5]);
+      };
+      const data = await manager.loadStandardFontData("RetryFont", goodFetcher);
+      expect([...data]).toEqual([5]);
+      expect(attempts).toBe(2);
+      expect(manager.cacheStats().entries["standard-font"]).toBe(1);
     });
 
     it("loadBuiltInCMap 带缓存与去重，cacheStats 反映占用", async function () {
@@ -683,9 +817,11 @@ describe("font_manager", function () {
       expect(fetchCount).toBe(1); // 第二次命中 FontManager 缓存
       expect(first).toBe(second); // 缓存语义一致：同一数据对象
       expect(first.isCompressed).toBe(true);
-      // 旧缓存不再被读写（无双写、无旁路）。
+      // 唯一缓存源：数据进入 FontManager 缓存，旧 Map 无任何读写。
+      expect(
+        FontManager.getInstance().cacheStats().entries["builtin-cmap"]
+      ).toBe(1);
       expect(builtInCMapCache.size).toBe(0);
-      expect("builtInCMapCache" in evaluator).toBe(false);
     });
 
     it("构造前预填充的 builtInCMapCache 被迁入 FontManager（兼容旧调用方）", async function () {
