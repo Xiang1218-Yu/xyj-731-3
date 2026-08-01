@@ -1,6 +1,11 @@
 {
   "name": "pdf.js",
   "type": "module",
+  "scripts": {
+    "fontmanager:compile": "tsc -p src/core/font_manager/tsconfig.json",
+    "fontmanager:test": "jasmine --config=test/unit/font_manager.jasmine.json",
+    "fontmanager:test:full": "gulp unittestcli"
+  },
   "devDependencies": {
     "@babel/core": "^8.0.1",
     "@babel/preset-env": "^8.0.2",

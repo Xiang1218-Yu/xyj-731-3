@@ -139,6 +139,11 @@ const RENDERING_CANCELLED_TIMEOUT = 100; // ms
  *   located. Include the trailing slash.
  * @property {boolean} [cMapPacked] - Specifies if the Adobe CMaps are binary
  *   packed or not. The default value is `true`.
+ * @property {Object} [cMapPreload] - Optional CMap preload strategy used by
+ *   the `FontManager`: `{ strategy: "none" | "common" | "custom",
+ *   names?: string[] }`. CMaps are always loaded asynchronously on demand;
+ *   this only controls an additional background preloading pass.
+ *   The default value is `null` (no preloading).
  * @property {string} [iccUrl] - The URL where the predefined ICC profiles are
  *   located. Include the trailing slash.
  * @property {boolean} [useSystemFonts] - When `true`, fonts that aren't
@@ -257,6 +262,23 @@ function getDocument(src = {}) {
       : null;
   const cMapUrl = getFactoryUrlProp(src.cMapUrl);
   const cMapPacked = src.cMapPacked !== false;
+  // CMap 预加载策略（FontManager）；仅接受结构合法的配置，否则忽略。
+  const cMapPreload = (() => {
+    const value = src.cMapPreload;
+    if (
+      value &&
+      typeof value === "object" &&
+      ["none", "common", "custom"].includes(value.strategy)
+    ) {
+      return {
+        strategy: value.strategy,
+        names: Array.isArray(value.names)
+          ? value.names.filter(name => typeof name === "string")
+          : undefined,
+      };
+    }
+    return null;
+  })();
   const iccUrl = getFactoryUrlProp(src.iccUrl);
   const standardFontDataUrl = getFactoryUrlProp(src.standardFontDataUrl);
   const wasmUrl = getFactoryUrlProp(src.wasmUrl);
@@ -384,6 +406,7 @@ function getDocument(src = {}) {
       useWorkerFetch,
       cMapUrl,
       cMapPacked,
+      cMapPreload,
       iccUrl,
       standardFontDataUrl,
       wasmUrl,
