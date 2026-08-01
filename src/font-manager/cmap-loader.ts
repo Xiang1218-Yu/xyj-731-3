@@ -92,13 +92,21 @@ export class CMapLoader {
       return pending;
     }
 
-    const promise = this.#fetchAndCache(name);
+    // Attach cleanup to the promise itself, guarded by an *identity* check:
+    // only remove the entry if it still points at *this* promise. This closes a
+    // race where a failed attempt is retried (installing a new in-flight
+    // promise) before the older attempt's cleanup runs — without the guard the
+    // stale cleanup would delete the newer promise, letting a concurrent
+    // request re-issue a duplicate fetch. On failure the entry is removed so a
+    // later call may legitimately retry; on success the value is already in the
+    // cache, so subsequent calls hit the fast path above.
+    const promise = this.#fetchAndCache(name).finally(() => {
+      if (this.#inFlight.get(name) === promise) {
+        this.#inFlight.delete(name);
+      }
+    });
     this.#inFlight.set(name, promise);
-    try {
-      return await promise;
-    } finally {
-      this.#inFlight.delete(name);
-    }
+    return promise;
   }
 
   /** Perform the actual fetch, populate the cache, and emit events. */

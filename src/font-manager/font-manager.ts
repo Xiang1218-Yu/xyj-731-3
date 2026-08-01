@@ -187,7 +187,19 @@ export class FontManager {
    * generic family.
    */
   resolveFallback(descriptor: FontDescriptor): FallbackChain {
-    const key = `${descriptor.baseFontName}|${descriptor.type}|${descriptor.embedded}`;
+    // The cache key must capture *every* input that changes the resolved chain.
+    // Style flags (serif/monospace/italic/bold) alter both the standard-font
+    // classification and the generic terminator, so bold/italic variants of the
+    // same base font must NOT share a cache entry.
+    const key = [
+      descriptor.baseFontName,
+      descriptor.type,
+      descriptor.embedded ? 1 : 0,
+      descriptor.isSerif ? 1 : 0,
+      descriptor.isMonospace ? 1 : 0,
+      descriptor.isItalic ? 1 : 0,
+      descriptor.isBold ? 1 : 0,
+    ].join("|");
     const cached = this.#cache.get("fallback", key);
     if (cached) {
       this.#eventBus.dispatch("fallbackResolved", {

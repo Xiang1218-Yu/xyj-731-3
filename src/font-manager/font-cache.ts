@@ -54,6 +54,15 @@ function composeKey(namespace: CacheNamespace, key: string): string {
 export class FontCache {
   readonly #store = new Map<string, CacheValueMap[CacheNamespace]>();
 
+  /**
+   * In-flight `getOrCreate` factories, keyed by the composed cache key. Used to
+   * de-duplicate concurrent misses for the same key so the (potentially
+   * expensive / network-bound) factory runs exactly once. The stored promise
+   * is the union of every namespace value type; the generic method casts it
+   * back to the precise per-namespace type.
+   */
+  readonly #inFlight = new Map<string, Promise<CacheValueMap[CacheNamespace]>>();
+
   #capacity: number;
 
   #hits = 0;
@@ -134,6 +143,12 @@ export class FontCache {
   /**
    * Return the cached value or compute-and-store it via `factory`. This is the
    * primary entry point used by the loader/resolver so caching is transparent.
+   *
+   * Concurrent calls for the same `(namespace, key)` are de-duplicated: only the
+   * first caller runs `factory`, and all callers await the same promise. This
+   * preserves the cache's "compute once" semantics even under concurrency. On
+   * factory rejection the in-flight entry is cleared so a later call may retry;
+   * the identity guard prevents a stale rejection from evicting a newer attempt.
    */
   async getOrCreate<N extends CacheNamespace>(
     namespace: N,
@@ -145,7 +160,25 @@ export class FontCache {
     if (existing !== undefined) {
       return { value: existing, fromCache: true };
     }
-    const value = await factory();
+
+    const composed = composeKey(namespace, key);
+    const pending = this.#inFlight.get(composed);
+    if (pending) {
+      // Sound: an in-flight entry under `composed` was created for this exact
+      // namespace, so its resolved value is `CacheValueMap[N]`.
+      return { value: (await pending) as CacheValueMap[N], fromCache: true };
+    }
+
+    const promise = factory();
+    this.#inFlight.set(composed, promise);
+    let value: CacheValueMap[N];
+    try {
+      value = await promise;
+    } finally {
+      if (this.#inFlight.get(composed) === promise) {
+        this.#inFlight.delete(composed);
+      }
+    }
     this.set(namespace, key, value, onEvict);
     return { value, fromCache: false };
   }
@@ -158,6 +191,9 @@ export class FontCache {
   /** Remove every entry and reset statistics. */
   clear(): void {
     this.#store.clear();
+    // Drop references to any in-flight factories; their late resolution will
+    // simply fail the identity guard in `getOrCreate` and be discarded.
+    this.#inFlight.clear();
     this.#hits = 0;
     this.#misses = 0;
     this.#evictions = 0;

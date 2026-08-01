@@ -61,19 +61,30 @@ fm.on("cmapLoaded", ({ name, fromCache }) => { /* ... */ });
 
 ## Build, lint & test (regression flow)
 
-From this directory (requires a local TypeScript; `../../node_modules/.bin/tsc`):
+The full flow is **persisted as npm scripts** (in the repo-root `package.json`)
+and as a single runner, so it is reproducible and CI-friendly — not ad-hoc
+shell commands. From the repo root:
 
 ```bash
-# 1. Enforce "no explicit any" (implicit any is already blocked by tsconfig).
-node check-no-any.mjs
-
-# 2. Strict compile → dist/ (JS + .d.ts + source maps).
-../../node_modules/.bin/tsc -p tsconfig.json
-
-# 3. Run the preserved regression suite against the compiled output.
-node --test test/font-manager.test.mjs
+npm run test:font-manager          # runs the full flow: lint -> compile -> tests
 ```
 
-All 27 regression tests cover the singleton, async/preload CMap loading,
+The individual steps are also exposed:
+
+```bash
+npm run test:font-manager:lint     # enforce "no explicit any"
+npm run test:font-manager:build    # strict compile -> dist/ (JS + .d.ts + maps)
+npm run test:font-manager:unit     # run the preserved regression suite
+```
+
+Equivalently, from this directory (the runner resolves the repo's local `tsc`):
+
+```bash
+node run-tests.mjs
+```
+
+All 33 regression tests cover the singleton, async/preload CMap loading,
 single-flight de-dup, the fallback chain invariants, cache hits/eviction, the
-typed event bus, and factory API-compatibility.
+typed event bus, factory API-compatibility, plus the concurrency & cache-key
+correctness fixes (in-flight retry safety, style-aware fallback keys,
+`getOrCreate` dedup, alias-safe standard matching).

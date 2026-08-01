@@ -1,6 +1,12 @@
 {
   "name": "pdf.js",
   "type": "module",
+  "scripts": {
+    "test:font-manager": "node src/font-manager/run-tests.mjs",
+    "test:font-manager:lint": "node src/font-manager/check-no-any.mjs",
+    "test:font-manager:build": "tsc -p src/font-manager/tsconfig.json",
+    "test:font-manager:unit": "node --test src/font-manager/test/font-manager.test.mjs"
+  },
   "devDependencies": {
     "@babel/core": "^8.0.1",
     "@babel/preset-env": "^8.0.2",

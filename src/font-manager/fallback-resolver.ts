@@ -167,10 +167,23 @@ export class FallbackResolver {
       push(alias, "substitution", null);
     }
 
-    // 3) Standard-14 classification. Try the canonical name, then its stem
-    //    (drop `-Bold`, `-Italic`, etc.) so `Times-Bold` still maps to Times.
-    const stem = canonical.split("-", 1)[0];
-    for (const candidate of [canonical, stem]) {
+    // 3) Standard-14 classification. We try, in order: the alias (canonical)
+    //    name, the original normalized name, and each of their stems (the part
+    //    before the first `-`, so `Times-Bold` still maps to Times). Deriving
+    //    candidates from *both* names — not just the alias — ensures a reachable
+    //    standard match is never skipped when an alias rewrites the stem.
+    const candidates: string[] = [];
+    const addCandidate = (value: string): void => {
+      if (value && !candidates.includes(value)) {
+        candidates.push(value);
+      }
+    };
+    addCandidate(canonical);
+    addCandidate(normalized);
+    addCandidate(canonical.split("-", 1)[0]);
+    addCandidate(normalized.split("-", 1)[0]);
+
+    for (const candidate of candidates) {
       const record = STANDARD_FONTS.get(candidate.toLowerCase());
       if (record) {
         push(record.family, "standard", record.standardFontFile);

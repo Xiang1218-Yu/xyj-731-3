@@ -369,3 +369,154 @@ describe("FontManager integration & API compatibility", () => {
     assert.equal(fm.cacheStats.size, 0);
   });
 });
+
+/**
+ * A factory whose fetches are resolved/rejected manually via `settle`, so tests
+ * can interleave concurrent calls deterministically. Counts calls per filename.
+ */
+class DeferredFactory {
+  constructor() {
+    this.calls = [];
+    this.pending = new Map(); // filename -> { resolve, reject }
+  }
+
+  fetch({ kind, filename }) {
+    this.calls.push({ kind, filename });
+    return new Promise((resolve, reject) => {
+      this.pending.set(filename, { resolve, reject });
+    });
+  }
+
+  resolve(filename, bytes) {
+    this.pending.get(filename).resolve(bytes);
+    this.pending.delete(filename);
+  }
+
+  reject(filename, error) {
+    this.pending.get(filename).reject(error);
+    this.pending.delete(filename);
+  }
+
+  callCount(filename) {
+    return this.calls.filter(c => c.filename === filename).length;
+  }
+}
+
+describe("Regression: concurrency & cache-key correctness fixes", () => {
+  // Fix #1: a failed in-flight CMap fetch must not let a concurrent retry issue
+  // a duplicate fetch, and its late cleanup must not delete a newer promise.
+  it("CMap: failed attempt allows retry without clobbering a newer in-flight", async () => {
+    const cache = new FontCache(16);
+    const eventBus = new FontEventBus();
+    const factory = new DeferredFactory();
+    const loader = new CMapLoader(
+      { cMapUrl: "/c/", cMapPacked: true, preloadStrategy: "lazy", preloadNames: [] },
+      { cache, eventBus, factory }
+    );
+
+    const first = loader.load("Foo");
+    const firstRejection = assert.rejects(() => first, /boom/);
+    factory.reject("Foo.bcmap", new Error("boom"));
+    await firstRejection;
+
+    // After failure the in-flight entry is gone, so a new call retries (2nd fetch).
+    const second = loader.load("Foo");
+    assert.equal(factory.callCount("Foo.bcmap"), 2);
+    factory.resolve("Foo.bcmap", new Uint8Array([1]));
+    const loaded = await second;
+    assert.deepEqual(loaded.data, new Uint8Array([1]));
+  });
+
+  // Fix #3: concurrent getOrCreate misses for the same key run factory once.
+  it("FontCache.getOrCreate de-duplicates concurrent misses", async () => {
+    const cache = new FontCache(16);
+    let runs = 0;
+    const factory = async () => {
+      runs++;
+      await Promise.resolve();
+      return new Uint8Array([7]);
+    };
+    const [a, b] = await Promise.all([
+      cache.getOrCreate("fontData", "k", factory),
+      cache.getOrCreate("fontData", "k", factory),
+    ]);
+    assert.equal(runs, 1);
+    assert.deepEqual(a.value, new Uint8Array([7]));
+    assert.deepEqual(b.value, new Uint8Array([7]));
+    // One of them was served from the shared in-flight promise.
+    assert.ok(a.fromCache || b.fromCache);
+  });
+
+  it("FontCache.getOrCreate allows retry after factory rejection", async () => {
+    const cache = new FontCache(16);
+    await assert.rejects(() =>
+      cache.getOrCreate("fontData", "k", async () => {
+        throw new Error("fail");
+      })
+    );
+    const { value } = await cache.getOrCreate(
+      "fontData",
+      "k",
+      async () => new Uint8Array([3])
+    );
+    assert.deepEqual(value, new Uint8Array([3]));
+  });
+
+  // Fix #3 (loadFontData path): concurrent loads hit the factory once.
+  it("loadFontData de-duplicates concurrent misses", async () => {
+    FontManager.resetInstanceForTesting();
+    const fm = FontManager.getInstance();
+    const factory = new DeferredFactory();
+    await fm.configure({ standardFontDataUrl: "/f/", binaryDataFactory: factory });
+    const p1 = fm.loadFontData("Foo.pfb");
+    const p2 = fm.loadFontData("Foo.pfb");
+    assert.equal(factory.callCount("Foo.pfb"), 1);
+    factory.resolve("Foo.pfb", new Uint8Array([9]));
+    assert.deepEqual(await p1, new Uint8Array([9]));
+    assert.deepEqual(await p2, new Uint8Array([9]));
+  });
+
+  // Fix #2: style flags participate in the fallback cache key.
+  it("resolveFallback: bold/italic variants do not share a cache entry", async () => {
+    FontManager.resetInstanceForTesting();
+    const fm = FontManager.getInstance();
+    await fm.configure({});
+    const base = {
+      baseFontName: "MyFont",
+      type: "TrueType",
+      embedded: true,
+      isSerif: false,
+      isMonospace: false,
+      isItalic: false,
+      isBold: false,
+    };
+    const regular = fm.resolveFallback(base);
+    const bold = fm.resolveFallback({ ...base, isBold: true });
+    const italic = fm.resolveFallback({ ...base, isItalic: true });
+    // Distinct descriptors → distinct (non-shared) chain objects.
+    assert.notEqual(regular, bold);
+    assert.notEqual(regular, italic);
+    // Identical descriptor still hits the cache (same object).
+    assert.equal(bold, fm.resolveFallback({ ...base, isBold: true }));
+  });
+
+  // Fix #4: standard-14 match reachable from the original name is not skipped
+  // when an alias rewrites the stem. `TimesNewRomanPS-BoldMT` aliases to
+  // `Times-Bold`; the resolver must still classify it as the Times standard.
+  it("FallbackResolver: alias does not hide a reachable standard match", () => {
+    const resolver = new FallbackResolver();
+    const chain = resolver.resolve({
+      baseFontName: "TimesNewRomanPS-BoldMT",
+      type: "TrueType",
+      embedded: false,
+      isSerif: true,
+      isMonospace: false,
+      isItalic: false,
+      isBold: true,
+    });
+    const standard = chain.entries.find(e => e.source === "standard");
+    assert.ok(standard, "expected a standard-14 entry");
+    assert.equal(standard.family, "Times");
+    assert.equal(standard.standardFontFile, "FoxitSerif.pfb");
+  });
+});
