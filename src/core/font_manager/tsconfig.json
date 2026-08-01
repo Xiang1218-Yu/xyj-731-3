@@ -1,0 +1,20 @@
+{
+  "//": "font_manager 模块的独立编译配置：把 TS 源码编译为同目录的 ESM .js，供现有 JS 代码与 gulp 构建（仅识别 .js）直接消费。strict + noImplicitAny 保证无 any 类型。",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "strict": true,
+    "noImplicitAny": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noEmitOnError": true,
+    "declaration": true,
+    "declarationMap": false,
+    "sourceMap": false,
+    "removeComments": false
+  },
+  "include": ["*.ts"]
+}

@@ -80,6 +80,7 @@ import { bidi } from "./bidi.js";
 import { ColorSpace } from "./colorspace.js";
 import { ColorSpaceUtils } from "./colorspace_utils.js";
 import { compilePatternInfo } from "./obj_bin_transform_core.js";
+import { FontManager } from "./font_manager/font_manager.js";
 import { getFontSubstitution } from "./font_substitutions.js";
 import { getGlyphsUnicode } from "./glyphlist.js";
 import { getMetrics } from "./metrics.js";
@@ -102,6 +103,10 @@ const DefaultPartialEvaluatorOptions = Object.freeze({
   useWorkerFetch: true,
   cMapUrl: null,
   cMapPacked: true,
+  // CMap 预加载策略配置（FontManager），结构见 `CMapPreloadConfig`：
+  // `{ strategy: "none" | "common" | "custom", names?: string[] }`，
+  // 缺省 `null` 表示不预加载（保持纯异步按需加载，不影响首屏渲染）。
+  cMapPreload: null,
   iccUrl: null,
   standardFontDataUrl: null,
   wasmUrl: null,
@@ -238,8 +243,6 @@ class PartialEvaluator {
     this.pageIndex = pageIndex;
     this.idFactory = idFactory;
     this.fontCache = fontCache;
-    this.builtInCMapCache = builtInCMapCache;
-    this.standardFontDataCache = standardFontDataCache;
     this.globalColorSpaceCache = globalColorSpaceCache;
     this.globalImageCache = globalImageCache;
     this.systemFontCache = systemFontCache;
@@ -248,6 +251,23 @@ class PartialEvaluator {
 
     this._regionalImageCache = new RegionalImageCache();
     this._fetchBuiltInCMapBound = this.fetchBuiltInCMap.bind(this);
+    // FontManager 单例：字体/CMap 加载的统一调度中心
+    // （异步按需加载、并发去重、LRU 缓存、回退链决策、事件总线）。
+    this._fontManager = FontManager.getInstance();
+
+    // 兼容历史调用方（含既有测试）在构造前预填充的缓存：
+    // 一次性迁入 FontManager 统一管理，之后由 FontManager 作为
+    // 唯一缓存数据源（避免双重缓存、保证缓存语义一致）。
+    if (builtInCMapCache) {
+      for (const [name, data] of builtInCMapCache) {
+        this._fontManager.primeBuiltInCMap(name, data);
+      }
+    }
+    if (standardFontDataCache) {
+      for (const [name, data] of standardFontDataCache) {
+        this._fontManager.primeStandardFontData(name, data);
+      }
+    }
   }
 
   /**
@@ -389,43 +409,42 @@ class PartialEvaluator {
   }
 
   async fetchBuiltInCMap(name) {
-    const cachedData = this.builtInCMapCache.get(name);
-    if (cachedData) {
-      return cachedData;
-    }
-    let data;
-
-    if (this.options.useWorkerFetch) {
-      // Only compressed CMaps are (currently) supported here.
-      data = {
-        cMapData: await fetchBinaryData(`${this.options.cMapUrl}${name}.bcmap`),
-        isCompressed: true,
-      };
-    } else {
+    // 低层抓取逻辑保持不变，以“取数器”形式注入 FontManager，
+    // 由其统一负责：异步按需加载、并发请求去重、LRU 缓存与事件通知。
+    // FontManager 是唯一的缓存数据源，本方法不再维护任何本地缓存。
+    const fetcher = async cmapName => {
+      if (this.options.useWorkerFetch) {
+        // Only compressed CMaps are (currently) supported here.
+        return {
+          cMapData: await fetchBinaryData(
+            `${this.options.cMapUrl}${cmapName}.bcmap`
+          ),
+          isCompressed: true,
+        };
+      }
       if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
         throw new Error("Only worker-thread fetching supported.");
       }
       // Get the data on the main-thread instead.
-      data = {
+      return {
         cMapData: await this.handler.sendWithPromise("FetchBinaryData", {
           kind: "cMapUrl",
-          filename: `${name}${this.options.cMapPacked ? ".bcmap" : ""}`,
+          filename: `${cmapName}${this.options.cMapPacked ? ".bcmap" : ""}`,
         }),
         isCompressed: this.options.cMapPacked,
       };
-    }
-    // Cache the CMap data, to avoid fetching it repeatedly.
-    this.builtInCMapCache.set(name, data);
+    };
+
+    const data = await this._fontManager.loadBuiltInCMap(name, fetcher);
+
+    // 首次使用内置 CMap 时，按 `cMapPreload` 配置的策略在后台预加载
+    // （默认 "none" 不预加载；调用幂等且异步执行，不阻塞当前渲染）。
+    this._fontManager.preloadCMaps(this.options.cMapPreload, fetcher);
 
     return data;
   }
 
   async fetchStandardFontData(name) {
-    const cachedData = this.standardFontDataCache.get(name);
-    if (cachedData) {
-      return new Stream(cachedData);
-    }
-
     // The symbol fonts are not consistent across platforms, always load the
     // standard font data for them.
     if (
@@ -438,31 +457,35 @@ class PartialEvaluator {
 
     const standardFontNameToFileName = getFontNameToFileMap(),
       filename = standardFontNameToFileName[name];
-    let data;
 
-    try {
-      if (this.options.useWorkerFetch) {
-        data = await fetchBinaryData(
-          `${this.options.standardFontDataUrl}${filename}`
-        );
-      } else {
+    // 低层抓取逻辑保持不变，以“取数器”形式注入 FontManager，
+    // 由其统一负责并发去重与进程级缓存（失败返回 `null`，语义不变）。
+    const fetcher = async () => {
+      try {
+        if (this.options.useWorkerFetch) {
+          return await fetchBinaryData(
+            `${this.options.standardFontDataUrl}${filename}`
+          );
+        }
         if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
           throw new Error("Only worker-thread fetching supported.");
         }
         // Get the data on the main-thread instead.
-        data = await this.handler.sendWithPromise("FetchBinaryData", {
+        return await this.handler.sendWithPromise("FetchBinaryData", {
           kind: "standardFontDataUrl",
           filename,
         });
+      } catch (ex) {
+        warn(ex);
+        return null;
       }
-    } catch (ex) {
-      warn(ex);
+    };
+    // 缓存（含 issue 11399 的重复抓取问题）由 FontManager 统一管理，
+    // 本方法不再维护任何本地缓存。
+    const data = await this._fontManager.loadStandardFontData(name, fetcher);
+    if (!data) {
       return null;
     }
-    // Cache the "raw" standard font data, to avoid fetching it repeatedly
-    // (see e.g. issue 11399).
-    this.standardFontDataCache.set(name, data);
-
     return new Stream(data);
   }
 
@@ -1255,12 +1278,18 @@ class PartialEvaluator {
     cssFontInfo = null,
     seenRefs = null
   ) {
-    const errorFont = async () =>
-      new TranslatedFont({
+    const errorFont = async () => {
+      // 通过 FontManager 的统一事件总线广播字体终态错误，便于上层监控。
+      this._fontManager.events.emit("font:error", {
+        fontName: fontName ?? null,
+        message: `Font "${fontName}" is not available.`,
+      });
+      return new TranslatedFont({
         loadedName: "g_font_error",
         font: new ErrorFont(`Font "${fontName}" is not available.`),
         dict: font,
       });
+    };
 
     let fontRef;
     if (font) {
@@ -1293,6 +1322,22 @@ class PartialEvaluator {
 
     if (!(font instanceof Dict)) {
       if (!this.options.ignoreErrors && !this.parsingType3Font) {
+        warn(`Font "${fontName}" is not available.`);
+        return errorFont();
+      }
+      // 经由 FontManager 的智能回退链决策。默认链保持历史行为：
+      // 字典缺失 → 回退到默认字体字典；其余情况 → ErrorFont。
+      // 可通过 `FontManager.fallbackChain` 插入自定义处理器扩展策略。
+      const decision = this._fontManager.resolveFontFallback({
+        fontName: fontName ?? null,
+        baseFontName: null,
+        reason: "missing-dict",
+        bold: false,
+        italic: false,
+        monospace: false,
+        serif: false,
+      });
+      if (decision.isTerminalError) {
         warn(`Font "${fontName}" is not available.`);
         return errorFont();
       }
@@ -1394,11 +1439,29 @@ class PartialEvaluator {
             throw new Error(`Type3 font load error: ${reason}`);
           }
         }
+        // 广播字体加载成功事件（统一事件总线，便于监控/统计）。
+        this._fontManager.events.emit("font:load:success", {
+          fontName: fontName ?? "",
+          loadedName: font.loadedName,
+        });
         resolve(translated);
       })
       .catch(reason => {
         // TODO reject?
         warn(`loadFont - translateFont failed: "${reason}".`);
+
+        // 字体转换失败：经回退链确认终态策略（默认 → ErrorFont），
+        // 并广播 `font:fallback` 事件，保证失败路径可被观测。
+        const baseFont = font instanceof Dict ? font.get("BaseFont") : null;
+        this._fontManager.resolveFontFallback({
+          fontName: fontName ?? null,
+          baseFontName: baseFont instanceof Name ? baseFont.name : null,
+          reason: "load-failed",
+          bold: false,
+          italic: false,
+          monospace: false,
+          serif: false,
+        });
 
         resolve(
           new TranslatedFont({
@@ -4871,6 +4934,10 @@ class TranslatedFont {
     }
     // When font loading failed, fall back to the built-in font renderer.
     this.font.disableFontFace = true;
+    // 广播 FontFace 回退事件（统一事件总线，便于上层观测降级情况）。
+    FontManager.getInstance().events.emit("font:face-fallback", {
+      loadedName: this.loadedName,
+    });
     // An arbitrary number of text rendering operators could have been
     // encountered between the point in time when the 'Font' message was sent
     // to the main-thread, and the point in time when the 'FontFallback'

@@ -11,6 +11,9 @@ external/quickjs/
 test/stats/results/
 test/tmp/
 test/pdfs/
+# font_manager 的 .js/.d.ts 是 tsc 生成的产物，格式由编译器决定。
+src/core/font_manager/**/*.js
+src/core/font_manager/**/*.d.ts
 web/locale/
 *~/
 .claude/

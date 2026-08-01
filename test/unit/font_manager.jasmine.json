@@ -1,0 +1,5 @@
+{
+  "//": "FontManager 独立快速回归配置（无需 gulp 构建，直接对 src 运行）：npm run fontmanager:test。完整官方流程请用 npm run fontmanager:test:full（即 gulp unittestcli）。",
+  "spec_dir": "test/unit",
+  "spec_files": ["font_manager_spec.js"]
+}

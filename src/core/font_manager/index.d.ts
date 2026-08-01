@@ -1,0 +1,16 @@
+/**
+ * 字体管理中心的公共入口（桶文件）。
+ *
+ * JS 调用方推荐从此文件导入：
+ *   `import { FontManager } from "./font_manager/index.js";`
+ * 类型导入（仅 TS 调用方需要）同样从此文件导出。
+ */
+export { COMMON_BUILT_IN_CMAPS, AsyncCMapLoader } from "./cmap_loader.js";
+export type { AsyncCMapLoaderOptions } from "./cmap_loader.js";
+export { FontEventBus } from "./event_bus.js";
+export type { FontEventListener, FontEventName } from "./event_bus.js";
+export { FontFallbackChain } from "./fallback_chain.js";
+export { FontManager } from "./font_manager.js";
+export { LruCache } from "./lru_cache.js";
+export type { LruCacheOptions } from "./lru_cache.js";
+export type { BuiltInCMapData, BuiltInCMapFetcher, CacheNamespace, CMapPreloadConfig, CMapPreloadStrategy, FontCacheStats, FontEventMap, FontFallbackContext, FontFallbackHandler, FontFallbackReason, FontFallbackResult, StandardFontDataFetcher, } from "./types.js";

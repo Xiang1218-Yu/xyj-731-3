@@ -44,6 +44,10 @@ export default [
       "test/stats/results/",
       "test/tmp/",
       "test/pdfs/",
+      // `font_manager` 的 .js/.d.ts 是由 .ts 源码经 tsc 生成的产物，
+      // 代码风格由编译器决定，故不参与 lint（.ts 源文件另行约束）。
+      "src/core/font_manager/**/*.js",
+      "src/core/font_manager/**/*.d.ts",
       "web/locale/",
       "web/wasm/",
       "**/*~/",
