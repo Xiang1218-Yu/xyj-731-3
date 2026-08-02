@@ -26,12 +26,12 @@
 /**
  * CSS font-style values supported by the font subsystem.
  */
-export type FontStyle = "normal" | "italic" | "oblique";
+type FontStyle = "normal" | "italic" | "oblique";
 
 /**
  * CSS font-weight values. Numeric weights as strings, plus keyword aliases.
  */
-export type FontWeight =
+type FontWeight =
   | "normal"
   | "bold"
   | "bolder"
@@ -49,7 +49,7 @@ export type FontWeight =
 /**
  * Describes a font's style and weight for fallback matching.
  */
-export interface FontStyleDescriptor {
+interface FontStyleDescriptor {
   /** The CSS font-style (normal, italic, oblique). */
   readonly style: FontStyle;
   /** The CSS font-weight. */
@@ -59,13 +59,8 @@ export interface FontStyleDescriptor {
 /**
  * Generic font family categories used as ultimate fallbacks.
  */
-export type GenericFontFamily =
-  | "serif"
-  | "sans-serif"
-  | "monospace"
-  | "cursive"
-  | "fantasy"
-  | "system-ui";
+type GenericFontFamily =
+  "serif" | "sans-serif" | "monospace" | "cursive" | "fantasy" | "system-ui";
 
 // ---------------------------------------------------------------------------
 // Font Data & Descriptor Types
@@ -74,7 +69,7 @@ export type GenericFontFamily =
 /**
  * MIME types recognized for embedded font data.
  */
-export type FontMimeType =
+type FontMimeType =
   | "font/opentype"
   | "font/ttf"
   | "font/woff"
@@ -86,7 +81,7 @@ export type FontMimeType =
 /**
  * The raw binary data of a font along with its MIME type.
  */
-export interface FontBinaryData {
+interface FontBinaryData {
   /** The font file bytes. */
   readonly data: Uint8Array;
   /** The MIME type of the font data. */
@@ -96,7 +91,7 @@ export interface FontBinaryData {
 /**
  * Metadata describing a font that may be loaded or substituted.
  */
-export interface FontDescriptor {
+interface FontDescriptor {
   /** The internal name used to reference the font after loading. */
   readonly loadedName: string;
   /** The original base font name from the PDF. */
@@ -120,7 +115,7 @@ export interface FontDescriptor {
 /**
  * CSS font info used to construct @font-face declarations.
  */
-export interface CssFontInfo {
+interface CssFontInfo {
   /** The CSS font-family name. */
   readonly fontFamily: string;
   /** The CSS font-weight. */
@@ -132,7 +127,7 @@ export interface CssFontInfo {
 /**
  * Information about a system font to be used as a substitute.
  */
-export interface SystemFontInfo {
+interface SystemFontInfo {
   /** The name under which the font is loaded into the document. */
   readonly loadedName: string;
   /** The original base font name. */
@@ -154,7 +149,7 @@ export interface SystemFontInfo {
 /**
  * Raw CMap data along with compression flag.
  */
-export interface CMapRawData {
+interface CMapRawData {
   /** The CMap file bytes (binary or text-encoded). */
   readonly cMapData: Uint8Array;
   /** Whether the data is a compressed binary CMap (.bcmap). */
@@ -174,7 +169,7 @@ export interface CMapRawData {
  * - `unicode`:   Preload the four UCS2 unicode CMaps.
  * - `auto`:      Heuristically preload based on document font info.
  */
-export type CMapPreloadStrategy =
+type CMapPreloadStrategy =
   | "none"
   | "eager"
   | "japanese"
@@ -188,7 +183,7 @@ export type CMapPreloadStrategy =
 /**
  * Options controlling CMap loading behavior.
  */
-export interface CMapLoadOptions {
+interface CMapLoadOptions {
   /** Base URL for fetching CMap files. */
   readonly cMapUrl: string | undefined;
   /** Whether CMaps are binary-packed (.bcmap). */
@@ -202,16 +197,12 @@ export interface CMapLoadOptions {
 /**
  * The status of a CMap load operation.
  */
-export type CMapLoadStatus =
-  | "pending"
-  | "loading"
-  | "loaded"
-  | "error";
+type CMapLoadStatus = "pending" | "loading" | "loaded" | "error";
 
 /**
  * A cached CMap entry with lifecycle metadata.
  */
-export interface CMapCacheEntry {
+interface CMapCacheEntry {
   /** The CMap name (e.g. "Adobe-Japan1-UCS2"). */
   readonly name: string;
   /** The current load status. */
@@ -233,7 +224,7 @@ export interface CMapCacheEntry {
 /**
  * Levels in the font fallback chain, from highest to lowest priority.
  */
-export enum FallbackLevel {
+enum FallbackLevel {
   /** The exact embedded font from the PDF. */
   Embedded = 0,
   /** A direct substitution based on the base font name. */
@@ -251,7 +242,7 @@ export enum FallbackLevel {
 /**
  * A single entry in the font fallback chain.
  */
-export interface FallbackChainEntry {
+interface FallbackChainEntry {
   /** The fallback level. */
   readonly level: FallbackLevel;
   /** The font family name to try. */
@@ -267,7 +258,7 @@ export interface FallbackChainEntry {
 /**
  * The result of resolving a fallback chain.
  */
-export interface FallbackChainResult {
+interface FallbackChainResult {
   /** The original font name requested. */
   readonly requestedName: string;
   /** The ordered list of fallback entries. */
@@ -281,7 +272,7 @@ export interface FallbackChainResult {
 /**
  * Character coverage information for a font.
  */
-export interface CharCoverage {
+interface CharCoverage {
   /** Array of Unicode codepoint ranges this font covers. */
   readonly unicodeRanges: readonly (readonly [number, number])[];
   /** Whether CJK characters are covered. */
@@ -297,7 +288,7 @@ export interface CharCoverage {
 /**
  * Options for a cache instance.
  */
-export interface CacheOptions {
+interface CacheOptions {
   /** Maximum number of entries before eviction. 0 = unlimited. */
   readonly maxSize: number;
   /** Time-to-live in milliseconds. 0 = no expiration. */
@@ -309,7 +300,7 @@ export interface CacheOptions {
 /**
  * Statistics about cache usage.
  */
-export interface CacheStats {
+interface CacheStats {
   /** Total number of entries currently in the cache. */
   readonly size: number;
   /** Total number of cache hits. */
@@ -327,7 +318,7 @@ export interface CacheStats {
  *
  * @typeParam T - The type of the cached value.
  */
-export interface CacheEntry<T> {
+interface CacheEntry<T> {
   /** The cached value. */
   readonly value: T;
   /** Timestamp when the entry was created (ms since epoch). */
@@ -345,7 +336,7 @@ export interface CacheEntry<T> {
 /**
  * Enumeration of all font lifecycle event types.
  */
-export enum FontEventType {
+enum FontEventType {
   /** Fired when a font begins loading. */
   FontLoadStart = "fontloadstart",
   /** Fired when a font finishes loading successfully. */
@@ -373,7 +364,7 @@ export enum FontEventType {
 /**
  * Payload for font load start event.
  */
-export interface FontLoadStartEvent {
+interface FontLoadStartEvent {
   readonly fontName: string;
   readonly loadedName: string;
   readonly timestamp: number;
@@ -382,7 +373,7 @@ export interface FontLoadStartEvent {
 /**
  * Payload for font load success event.
  */
-export interface FontLoadSuccessEvent {
+interface FontLoadSuccessEvent {
   readonly fontName: string;
   readonly loadedName: string;
   readonly loadTimeMs: number;
@@ -392,7 +383,7 @@ export interface FontLoadSuccessEvent {
 /**
  * Payload for font load error event.
  */
-export interface FontLoadErrorEvent {
+interface FontLoadErrorEvent {
   readonly fontName: string;
   readonly loadedName: string;
   readonly error: Error;
@@ -402,7 +393,7 @@ export interface FontLoadErrorEvent {
 /**
  * Payload for font fallback event.
  */
-export interface FontFallbackEvent {
+interface FontFallbackEvent {
   readonly fontName: string;
   readonly fromLevel: FallbackLevel;
   readonly toLevel: FallbackLevel;
@@ -412,7 +403,7 @@ export interface FontFallbackEvent {
 /**
  * Payload for CMap load start event.
  */
-export interface CMapLoadStartEvent {
+interface CMapLoadStartEvent {
   readonly cMapName: string;
   readonly timestamp: number;
 }
@@ -420,7 +411,7 @@ export interface CMapLoadStartEvent {
 /**
  * Payload for CMap load success event.
  */
-export interface CMapLoadSuccessEvent {
+interface CMapLoadSuccessEvent {
   readonly cMapName: string;
   readonly loadTimeMs: number;
   readonly fromCache: boolean;
@@ -430,7 +421,7 @@ export interface CMapLoadSuccessEvent {
 /**
  * Payload for CMap load error event.
  */
-export interface CMapLoadErrorEvent {
+interface CMapLoadErrorEvent {
   readonly cMapName: string;
   readonly error: Error;
 }
@@ -438,7 +429,7 @@ export interface CMapLoadErrorEvent {
 /**
  * Payload for CMap preload events.
  */
-export interface CMapPreloadEvent {
+interface CMapPreloadEvent {
   readonly strategy: CMapPreloadStrategy;
   readonly totalCount: number;
   readonly successCount: number;
@@ -449,7 +440,7 @@ export interface CMapPreloadEvent {
 /**
  * Payload for cache eviction event.
  */
-export interface CacheEvictionEvent {
+interface CacheEvictionEvent {
   readonly cacheName: string;
   readonly key: string;
   readonly reason: "size" | "ttl" | "manual";
@@ -458,7 +449,7 @@ export interface CacheEvictionEvent {
 /**
  * Payload for manager destroy event.
  */
-export interface ManagerDestroyEvent {
+interface ManagerDestroyEvent {
   readonly timestamp: number;
   readonly stats: FontManagerStats;
 }
@@ -467,7 +458,7 @@ export interface ManagerDestroyEvent {
  * Maps event types to their corresponding payload types.
  * This provides type-safe event dispatching.
  */
-export interface FontEventMap {
+interface FontEventMap {
   readonly [FontEventType.FontLoadStart]: FontLoadStartEvent;
   readonly [FontEventType.FontLoadSuccess]: FontLoadSuccessEvent;
   readonly [FontEventType.FontLoadError]: FontLoadErrorEvent;
@@ -486,7 +477,7 @@ export interface FontEventMap {
  *
  * @typeParam K - The event type key.
  */
-export type FontEventListener<K extends FontEventType> = (
+type FontEventListener<K extends FontEventType> = (
   payload: FontEventMap[K]
 ) => void;
 
@@ -497,7 +488,7 @@ export type FontEventListener<K extends FontEventType> = (
 /**
  * Configuration for the FontManager singleton.
  */
-export interface FontManagerConfig {
+interface FontManagerConfig {
   /** CMap loading options. */
   readonly cMap: CMapLoadOptions;
   /** Cache options for font data. */
@@ -517,7 +508,7 @@ export interface FontManagerConfig {
 /**
  * Aggregated statistics about the FontManager.
  */
-export interface FontManagerStats {
+interface FontManagerStats {
   /** Cache statistics for fonts. */
   readonly fontCacheStats: CacheStats;
   /** Cache statistics for CMaps. */
@@ -537,7 +528,7 @@ export interface FontManagerStats {
 /**
  * Default configuration values for the FontManager.
  */
-export const DEFAULT_FONT_MANAGER_CONFIG: Readonly<FontManagerConfig> = {
+const DEFAULT_FONT_MANAGER_CONFIG: Readonly<FontManagerConfig> = {
   cMap: {
     cMapUrl: undefined,
     cMapPacked: true,
@@ -568,7 +559,7 @@ export const DEFAULT_FONT_MANAGER_CONFIG: Readonly<FontManagerConfig> = {
  * Interface for fetching binary resources (CMaps, fonts).
  * This abstracts the fetch mechanism (DOM fetch, Node.js fs, etc.).
  */
-export interface BinaryDataFetcher {
+interface BinaryDataFetcher {
   /**
    * Fetch a binary resource.
    * @param kind - The kind of resource ("cMapUrl" | "standardFontDataUrl").
@@ -581,11 +572,53 @@ export interface BinaryDataFetcher {
 /**
  * Function type for fetching built-in CMap data.
  */
-export type FetchBuiltInCMapFn = (name: string) => Promise<CMapRawData>;
+type FetchBuiltInCMapFn = (name: string) => Promise<CMapRawData>;
 
 /**
  * Function type for fetching standard font data.
  */
-export type FetchStandardFontDataFn = (
+type FetchStandardFontDataFn = (
   name: string
 ) => Promise<Uint8Array | undefined>;
+
+export type {
+  BinaryDataFetcher,
+  CacheEntry,
+  CacheEvictionEvent,
+  CacheOptions,
+  CacheStats,
+  CharCoverage,
+  CMapCacheEntry,
+  CMapLoadErrorEvent,
+  CMapLoadOptions,
+  CMapLoadStartEvent,
+  CMapLoadStatus,
+  CMapLoadSuccessEvent,
+  CMapPreloadEvent,
+  CMapPreloadStrategy,
+  CMapRawData,
+  CssFontInfo,
+  FallbackChainEntry,
+  FallbackChainResult,
+  FetchBuiltInCMapFn,
+  FetchStandardFontDataFn,
+  FontBinaryData,
+  FontDescriptor,
+  FontEventListener,
+  FontEventMap,
+  FontFallbackEvent,
+  FontLoadErrorEvent,
+  FontLoadStartEvent,
+  FontLoadSuccessEvent,
+  FontManagerConfig,
+  FontManagerStats,
+  FontMimeType,
+  FontStyle,
+  FontStyleDescriptor,
+  FontWeight,
+  GenericFontFamily,
+  ManagerDestroyEvent,
+  SystemFontInfo,
+};
+
+export { DEFAULT_FONT_MANAGER_CONFIG, FallbackLevel, FontEventType };

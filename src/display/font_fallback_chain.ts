@@ -19,24 +19,24 @@
  *
  * Design principles:
  *  - Single responsibility: resolving an ordered list of fallback fonts.
- *  - Multi-level: embedded -> direct substitution -> standard -> system -> generic -> renderer.
+ *  - Multi-level: embedded, direct, standard, system, generic, renderer.
  *  - Character-aware: uses Unicode range info to pick CJK vs Latin fallbacks.
  *  - Adaptive: tracks load failures and deprioritizes failing fonts.
- *  - Compatible: wraps the existing getFontSubstitution logic from font_substitutions.js.
- *  - Stateless resolution: the chain builder itself is stateless; failure tracking
+ *  - Compatible: wraps getFontSubstitution from font_substitutions.js.
+ *  - Stateless resolution: builder is stateless; failure tracking
  *    is kept in a separate registry.
  *
  * The fallback chain is intentionally separate from FontManager so it can be
  * unit-tested in isolation and reused by the core (worker) layer.
  */
 
-import type {
-  FallbackChainEntry,
-  FallbackChainResult,
-  FontStyleDescriptor,
-  GenericFontFamily,
+import {
+  type FallbackChainEntry,
+  type FallbackChainResult,
+  FallbackLevel,
+  type FontStyleDescriptor,
+  type GenericFontFamily,
 } from "./font_types.js";
-import { FallbackLevel } from "./font_types.js";
 
 // ---------------------------------------------------------------------------
 // Font failure tracking
@@ -56,7 +56,7 @@ interface FontFailureRecord {
  * Tracks font load failures to adapt the fallback chain over time.
  * This is a separate concern from chain resolution.
  */
-export class FontFailureTracker {
+class FontFailureTracker {
   readonly #failures: Map<string, FontFailureRecord> = new Map();
 
   /** After this many failures, a font is deprioritized. */
@@ -138,20 +138,71 @@ interface StandardFontInfo {
 
 const STANDARD_FONT_MAP: ReadonlyMap<string, StandardFontInfo> = new Map([
   // Serif
-  ["Times-Roman", { genericFamily: "serif", style: { style: "normal", weight: "normal" } }],
-  ["Times-Bold", { genericFamily: "serif", style: { style: "normal", weight: "bold" } }],
-  ["Times-Italic", { genericFamily: "serif", style: { style: "italic", weight: "normal" } }],
-  ["Times-BoldItalic", { genericFamily: "serif", style: { style: "italic", weight: "bold" } }],
+  [
+    "Times-Roman",
+    { genericFamily: "serif", style: { style: "normal", weight: "normal" } },
+  ],
+  [
+    "Times-Bold",
+    { genericFamily: "serif", style: { style: "normal", weight: "bold" } },
+  ],
+  [
+    "Times-Italic",
+    { genericFamily: "serif", style: { style: "italic", weight: "normal" } },
+  ],
+  [
+    "Times-BoldItalic",
+    { genericFamily: "serif", style: { style: "italic", weight: "bold" } },
+  ],
   // Sans-serif
-  ["Helvetica", { genericFamily: "sans-serif", style: { style: "normal", weight: "normal" } }],
-  ["Helvetica-Bold", { genericFamily: "sans-serif", style: { style: "normal", weight: "bold" } }],
-  ["Helvetica-Oblique", { genericFamily: "sans-serif", style: { style: "oblique", weight: "normal" } }],
-  ["Helvetica-BoldOblique", { genericFamily: "sans-serif", style: { style: "oblique", weight: "bold" } }],
+  [
+    "Helvetica",
+    {
+      genericFamily: "sans-serif",
+      style: { style: "normal", weight: "normal" },
+    },
+  ],
+  [
+    "Helvetica-Bold",
+    { genericFamily: "sans-serif", style: { style: "normal", weight: "bold" } },
+  ],
+  [
+    "Helvetica-Oblique",
+    {
+      genericFamily: "sans-serif",
+      style: { style: "oblique", weight: "normal" },
+    },
+  ],
+  [
+    "Helvetica-BoldOblique",
+    {
+      genericFamily: "sans-serif",
+      style: { style: "oblique", weight: "bold" },
+    },
+  ],
   // Monospace
-  ["Courier", { genericFamily: "monospace", style: { style: "normal", weight: "normal" } }],
-  ["Courier-Bold", { genericFamily: "monospace", style: { style: "normal", weight: "bold" } }],
-  ["Courier-Oblique", { genericFamily: "monospace", style: { style: "oblique", weight: "normal" } }],
-  ["Courier-BoldOblique", { genericFamily: "monospace", style: { style: "oblique", weight: "bold" } }],
+  [
+    "Courier",
+    {
+      genericFamily: "monospace",
+      style: { style: "normal", weight: "normal" },
+    },
+  ],
+  [
+    "Courier-Bold",
+    { genericFamily: "monospace", style: { style: "normal", weight: "bold" } },
+  ],
+  [
+    "Courier-Oblique",
+    {
+      genericFamily: "monospace",
+      style: { style: "oblique", weight: "normal" },
+    },
+  ],
+  [
+    "Courier-BoldOblique",
+    { genericFamily: "monospace", style: { style: "oblique", weight: "bold" } },
+  ],
 ]);
 
 /**
@@ -159,10 +210,10 @@ const STANDARD_FONT_MAP: ReadonlyMap<string, StandardFontInfo> = new Map([
  * These base font names indicate CJK content requiring CJK-capable fallbacks.
  */
 const CJK_FONT_PATTERNS: readonly RegExp[] = [
-  /^Heisei|^KozMin|^KozGo/i,           // Japanese
-  /^MSung|^MHei|^STSong|^STHeiti/i,    // Chinese
-  /^HYSMyeong|^HYGoThic/i,            // Korean
-  /^Adobe(GB|CNS|Japan|Korea)/i,       // Adobe CJK collections
+  /^Heisei|^KozMin|^KozGo/i, // Japanese
+  /^MSung|^MHei|^STSong|^STHeiti/i, // Chinese
+  /^HYSMyeong|^HYGoThic/i, // Korean
+  /^Adobe(GB|CNS|Japan|Korea)/i, // Adobe CJK collections
   /(Song|Hei|Mincho|Gothic|Myeongjo)/i, // CJK family names
 ];
 
@@ -171,14 +222,14 @@ const CJK_FONT_PATTERNS: readonly RegExp[] = [
  * Used for character-coverage-based fallback decisions.
  */
 const CJK_UNICODE_RANGES: readonly (readonly [number, number])[] = [
-  [0x3000, 0x303f],   // CJK Symbols and Punctuation
-  [0x3040, 0x309f],   // Hiragana
-  [0x30a0, 0x30ff],   // Katakana
-  [0x3400, 0x4dbf],   // CJK Unified Ideographs Extension A
-  [0x4e00, 0x9fff],   // CJK Unified Ideographs
-  [0xac00, 0xd7af],   // Hangul Syllables
-  [0xf900, 0xfaff],   // CJK Compatibility Ideographs
-  [0xff00, 0xffef],   // Halfwidth and Fullwidth Forms
+  [0x3000, 0x303f], // CJK Symbols and Punctuation
+  [0x3040, 0x309f], // Hiragana
+  [0x30a0, 0x30ff], // Katakana
+  [0x3400, 0x4dbf], // CJK Unified Ideographs Extension A
+  [0x4e00, 0x9fff], // CJK Unified Ideographs
+  [0xac00, 0xd7af], // Hangul Syllables
+  [0xf900, 0xfaff], // CJK Compatibility Ideographs
+  [0xff00, 0xffef], // Halfwidth and Fullwidth Forms
 ];
 
 // ---------------------------------------------------------------------------
@@ -188,7 +239,7 @@ const CJK_UNICODE_RANGES: readonly (readonly [number, number])[] = [
 /**
  * Input parameters for building a fallback chain.
  */
-export interface FallbackChainParams {
+interface FallbackChainParams {
   /** The original base font name from the PDF. */
   readonly baseFontName: string;
   /** The standard font name, if known (e.g. "Helvetica"). */
@@ -200,18 +251,22 @@ export interface FallbackChainParams {
   /** The loaded name for this font. */
   readonly loadedName: string;
   /** Optional CSS font info. */
-  readonly cssFontInfo: {
-    readonly fontFamily: string;
-    readonly fontWeight: string;
-    readonly italicAngle: number | undefined;
-  } | undefined;
+  readonly cssFontInfo:
+    | {
+        readonly fontFamily: string;
+        readonly fontWeight: string;
+        readonly italicAngle: number | undefined;
+      }
+    | undefined;
   /** Optional system font substitution info (from getFontSubstitution). */
-  readonly systemFontInfo: {
-    readonly css: string;
-    readonly src: string;
-    readonly style: FontStyleDescriptor;
-    readonly guessFallback: boolean;
-  } | undefined;
+  readonly systemFontInfo:
+    | {
+        readonly css: string;
+        readonly src: string;
+        readonly style: FontStyleDescriptor;
+        readonly guessFallback: boolean;
+      }
+    | undefined;
   /** Sample Unicode codepoints used in the document, for coverage detection. */
   readonly sampleCodepoints: readonly number[] | undefined;
 }
@@ -230,7 +285,7 @@ export interface FallbackChainParams {
  * The builder is stateless; adaptive behavior is provided via an optional
  * FontFailureTracker.
  */
-export class FontFallbackChainBuilder {
+class FontFallbackChainBuilder {
   /** Optional failure tracker for adaptive fallback. */
   readonly #failureTracker: FontFailureTracker | undefined;
 
@@ -370,8 +425,8 @@ export class FontFallbackChainBuilder {
    */
   toCssFontFamily(result: FallbackChainResult): string {
     return result.chain
-      .filter((e) => e.level !== FallbackLevel.RendererFallback)
-      .map((e) => {
+      .filter(e => e.level !== FallbackLevel.RendererFallback)
+      .map(e => {
         // Generic families don't need quotes.
         if (e.level === FallbackLevel.GenericFamily) {
           return e.fontFamily;
@@ -436,7 +491,7 @@ export class FontFallbackChainBuilder {
     if (/sans|helvetica|arial|hei|gothic|goth|kaku/.test(name)) {
       return "sans-serif";
     }
-    if (/cursive|script|kai|kaiti/.test(name)) {
+    if (/cursive|script|kai/.test(name)) {
       return "cursive";
     }
     if (/fantasy|decor/.test(name)) {
@@ -446,7 +501,7 @@ export class FontFallbackChainBuilder {
     if (/song|mincho|ming|sung|myeongjo/.test(name)) {
       return "serif";
     }
-    if (/hei|gothic|kaku|gothic/.test(name)) {
+    if (/hei|gothic|kaku/.test(name)) {
       return "sans-serif";
     }
     return "sans-serif";
@@ -508,7 +563,7 @@ export class FontFallbackChainBuilder {
       return undefined;
     }
     // Remove quotes.
-    return first.replace(/^["']|["']$/g, "");
+    return first.replaceAll(/^["']|["']$/g, "");
   }
 
   /**
@@ -536,9 +591,24 @@ export class FontFallbackChainBuilder {
         "TeX Gyre Heros",
         "FreeSans",
       ],
-      "Helvetica-Bold": ["Arial", "Helvetica Neue", "Liberation Sans", "FreeSans"],
-      "Helvetica-Oblique": ["Arial", "Helvetica Neue", "Liberation Sans", "FreeSans"],
-      "Helvetica-BoldOblique": ["Arial", "Helvetica Neue", "Liberation Sans", "FreeSans"],
+      "Helvetica-Bold": [
+        "Arial",
+        "Helvetica Neue",
+        "Liberation Sans",
+        "FreeSans",
+      ],
+      "Helvetica-Oblique": [
+        "Arial",
+        "Helvetica Neue",
+        "Liberation Sans",
+        "FreeSans",
+      ],
+      "Helvetica-BoldOblique": [
+        "Arial",
+        "Helvetica Neue",
+        "Liberation Sans",
+        "FreeSans",
+      ],
       Courier: [
         "Courier New",
         "Liberation Mono",
@@ -637,3 +707,5 @@ export class FontFallbackChainBuilder {
     ];
   }
 }
+
+export { FallbackChainParams, FontFailureTracker, FontFallbackChainBuilder };

@@ -13,6 +13,7 @@
     "@metalsmith/markdown": "^1.10.0",
     "@napi-rs/canvas": "^1.0.2",
     "@types/node": "^26.1.1",
+    "@typescript-eslint/parser": "^8.65.0",
     "autoprefixer": "^10.5.4",
     "babel-loader": "^10.1.1",
     "babel-plugin-istanbul": "^8.0.2",

@@ -9,6 +9,7 @@ import preferMathClamp from "./external/eslint_plugins/prefer-math-clamp.mjs";
 import prettierRecommended from "eslint-plugin-prettier/recommended";
 import regexpPlugin from "eslint-plugin-regexp";
 import unicorn from "eslint-plugin-unicorn";
+import tsParser from "@typescript-eslint/parser";
 
 const jsFiles = folder => {
   const prefix = folder === "." ? "" : folder + "/";
@@ -149,6 +150,14 @@ export default [
             "stylelint",
             // See https://github.com/firebase/firebase-admin-node/discussions/1359.
             "eslint-plugin-perfectionist",
+            // TypeScript font modules resolve to .ts at build time.
+            "\\./font_types\\.js$",
+            "\\./font_manager\\.js$",
+            "\\./font_event_bus\\.js$",
+            "\\./font_cache\\.js$",
+            "\\./cmap_loader\\.js$",
+            "\\./font_fallback_chain\\.js$",
+            "\\./font_manager_adapter\\.js$",
           ],
         },
       ],
@@ -407,6 +416,13 @@ export default [
   },
   {
     files: ["**/*.ts"],
+    languageOptions: {
+      parser: tsParser,
+      parserOptions: {
+        ecmaVersion: 2025,
+        sourceType: "module",
+      },
+    },
     rules: {
       "import/no-unresolved": "off",
       "no-unused-vars": "off",

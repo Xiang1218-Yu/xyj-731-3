@@ -26,19 +26,21 @@
  * remaining importable by .js files via webpack/babel resolution.
  */
 
-import { FontManager } from "./font_manager.js";
 import type {
   BinaryDataFetcher,
   CMapPreloadStrategy,
   FontManagerConfig,
 } from "./font_types.js";
+import { FontManager } from "./font_manager.js";
 
 /**
- * Adapter that wraps an existing BinaryDataFactory (from binary_data_factory.js)
+ * Adapter wrapping an existing BinaryDataFactory (binary_data_factory.js)
  * into the BinaryDataFetcher interface expected by the FontManager.
  */
 class BinaryDataFactoryAdapter implements BinaryDataFetcher {
-  #factory: { fetch: (params: { kind: string; filename: string }) => Promise<Uint8Array> };
+  #factory: {
+    fetch: (params: { kind: string; filename: string }) => Promise<Uint8Array>;
+  };
 
   constructor(factory: {
     fetch: (params: { kind: string; filename: string }) => Promise<Uint8Array>;
@@ -55,7 +57,7 @@ class BinaryDataFactoryAdapter implements BinaryDataFetcher {
  * Configuration options accepted by configureFontManager.
  * These map to the existing getDocument parameters.
  */
-export interface FontManagerSetupOptions {
+interface FontManagerSetupOptions {
   /** URL prefix for CMap files. */
   cMapUrl?: string;
   /** Whether CMaps are binary-packed. */
@@ -85,9 +87,7 @@ export interface FontManagerSetupOptions {
  * @param options - Setup options derived from getDocument params.
  * @returns The configured FontManager instance.
  */
-function configureFontManager(
-  options: FontManagerSetupOptions
-): FontManager {
+function configureFontManager(options: FontManagerSetupOptions): FontManager {
   const manager = FontManager.getInstance();
 
   const fetcher = options.binaryDataFactory
@@ -126,8 +126,9 @@ function resetFontManager(): void {
 }
 
 export {
+  BinaryDataFactoryAdapter,
   configureFontManager,
+  FontManagerSetupOptions,
   getFontManager,
   resetFontManager,
-  BinaryDataFactoryAdapter,
 };

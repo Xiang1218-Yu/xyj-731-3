@@ -26,9 +26,9 @@
  */
 
 import type {
+  FontEventListener,
   FontEventMap,
   FontEventType,
-  FontEventListener,
 } from "./font_types.js";
 
 /**
@@ -46,7 +46,7 @@ interface ListenerEntry<K extends FontEventType = FontEventType> {
 /**
  * Options for registering an event listener.
  */
-export interface OnOptions {
+interface OnOptions {
   /** If true, the listener is automatically removed after first invocation. */
   readonly once?: boolean;
   /**
@@ -72,7 +72,7 @@ export interface OnOptions {
  * bus.dispatch(FontEventType.FontLoadSuccess, { ... });
  * ```
  */
-export class FontEventBus {
+class FontEventBus {
   /**
    * Map of event name -> set of listener entries.
    * Using a Map for O(1) lookup and Set for O(1) add/remove.
@@ -174,8 +174,8 @@ export class FontEventBus {
    * add/remove other listeners during dispatch don't affect the current
    * dispatch cycle.
    *
-   * Errors thrown by listeners are caught and logged, so one bad listener
-   * does not prevent others from receiving the event.
+   * Errors thrown by listeners are caught and silently ignored, so one bad
+   * listener does not prevent others from receiving the event.
    *
    * @typeParam K - The event type key.
    * @param eventName - The event to dispatch.
@@ -205,14 +205,8 @@ export class FontEventBus {
       }
       try {
         (entry.listener as FontEventListener<K>)(payload);
-      } catch (err) {
-        // Log but don't propagate; one bad listener shouldn't break others.
-        if (typeof console !== "undefined" && console.error) {
-          console.error(
-            `FontEventBus: listener for "${eventName}" threw:`,
-            err
-          );
-        }
+      } catch {
+        // Silently ignore; one bad listener shouldn't break others.
       }
     }
   }
@@ -236,7 +230,7 @@ export class FontEventBus {
         return;
       }
 
-      const listener: FontEventListener<K> = (payload) => {
+      const listener: FontEventListener<K> = payload => {
         signal?.removeEventListener("abort", onAbort);
         resolve(payload);
       };
@@ -315,3 +309,5 @@ export class FontEventBus {
     }
   }
 }
+
+export { FontEventBus, type OnOptions };

@@ -23,18 +23,20 @@
  *  - On-demand: CMaps are fetched only when needed.
  *  - Preload strategies: common CMaps can be prefetched to reduce latency.
  *  - Concurrency control: limits simultaneous fetch requests.
- *  - Request de-duplication: concurrent requests for the same CMap share one fetch.
+ *  - Request de-duplication: concurrent requests for the same CMap share
+ *    one fetch.
  *  - Observable: emits lifecycle events through the FontEventBus.
- *  - No direct dependency on the existing cmap.js parser; it only handles data I/O.
+ *  - No direct dependency on the existing cmap.js parser; it only handles
+ *    data I/O.
  */
 
-import type {
-  CMapLoadOptions,
-  CMapPreloadStrategy,
-  CMapRawData,
-  BinaryDataFetcher,
+import {
+  type BinaryDataFetcher,
+  type CMapLoadOptions,
+  type CMapPreloadStrategy,
+  type CMapRawData,
+  FontEventType,
 } from "./font_types.js";
-import { FontEventType } from "./font_types.js";
 import { FontEventBus } from "./font_event_bus.js";
 import { LRUCache } from "./font_cache.js";
 
@@ -144,7 +146,7 @@ const IDENTITY_CMAPS: ReadonlySet<string> = new Set([
  * The loader integrates with LRUCache for data caching and FontEventBus for
  * lifecycle events.
  */
-export class CMapLoader {
+class CMapLoader {
   /** Cache for raw CMap data. */
   readonly #cache: LRUCache<CMapRawData>;
 
@@ -293,7 +295,7 @@ export class CMapLoader {
 
     // Fire all preloads; they are concurrency-limited internally.
     const results = await Promise.allSettled(
-      names.map((name) => this.load(name))
+      names.map(name => this.load(name))
     );
 
     for (const result of results) {
@@ -366,7 +368,7 @@ export class CMapLoader {
   async #fetchWithConcurrency(name: string): Promise<CMapRawData> {
     // Wait for a concurrency slot if needed.
     if (this.#activeFetches >= this.#options.concurrency) {
-      await new Promise<void>((resolve) => {
+      await new Promise<void>(resolve => {
         this.#fetchQueue.push(resolve);
       });
     }
@@ -420,9 +422,7 @@ export class CMapLoader {
   /**
    * Get the list of CMap names for a given preload strategy.
    */
-  #getCMapNamesForStrategy(
-    strategy: CMapPreloadStrategy
-  ): readonly string[] {
+  #getCMapNamesForStrategy(strategy: CMapPreloadStrategy): readonly string[] {
     switch (strategy) {
       case "eager":
         // Preload all known CMap groups.
@@ -460,3 +460,5 @@ export class CMapLoader {
     }
   }
 }
+
+export { CMapLoader };

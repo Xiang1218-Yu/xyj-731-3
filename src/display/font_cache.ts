@@ -27,18 +27,14 @@
  *  - No external dependencies.
  */
 
-import type {
-  CacheEntry,
-  CacheOptions,
-  CacheStats,
-} from "./font_types.js";
+import type { CacheEntry, CacheOptions, CacheStats } from "./font_types.js";
 
 /**
  * Callback invoked when an entry is evicted from the cache.
  *
  * @typeParam T - The cached value type.
  */
-export type EvictionCallback<T> = (
+type EvictionCallback<T> = (
   key: string,
   value: T,
   reason: "size" | "ttl" | "manual"
@@ -60,7 +56,7 @@ export type EvictionCallback<T> = (
  * const data = cache.get("key1");
  * ```
  */
-export class LRUCache<T> {
+class LRUCache<T> {
   /** Internal storage: Map maintains insertion order for LRU eviction. */
   readonly #store: Map<string, CacheEntry<T>> = new Map();
 
@@ -75,7 +71,9 @@ export class LRUCache<T> {
 
   // Running statistics counters.
   #hits = 0;
+
   #misses = 0;
+
   #evictions = 0;
 
   /**
@@ -93,7 +91,7 @@ export class LRUCache<T> {
 
   /**
    * Retrieve a value from the cache.
-   * If the entry exists and has not expired, it is marked as most-recently-used.
+   * If the entry exists and has not expired, mark it most-recently-used.
    *
    * @param key - The cache key.
    * @returns The cached value, or undefined if not found/expired.
@@ -223,10 +221,7 @@ export class LRUCache<T> {
    * @param factory - An async function producing the value to cache.
    * @returns A promise resolving to the cached or newly created value.
    */
-  async getOrSetAsync(
-    key: string,
-    factory: () => Promise<T>
-  ): Promise<T> {
+  async getOrSetAsync(key: string, factory: () => Promise<T>): Promise<T> {
     const existing = this.get(key);
     if (existing !== undefined) {
       return existing;
@@ -239,7 +234,7 @@ export class LRUCache<T> {
     }
 
     const promise = factory()
-      .then((value) => {
+      .then(value => {
         this.set(key, value);
         this.#inFlight.delete(key);
         return value;
@@ -371,3 +366,6 @@ export class LRUCache<T> {
     }
   }
 }
+
+export type { EvictionCallback };
+export { LRUCache };

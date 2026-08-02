@@ -88,6 +88,7 @@ import { MurmurHash3_64 } from "../shared/murmurhash3.js";
 import { PDFImage } from "./image.js";
 import { Stream } from "./stream.js";
 import { stringToPDFString } from "./string_utils.js";
+import { WorkerFontManager } from "./worker_font_manager.js";
 
 const DefaultPartialEvaluatorOptions = Object.freeze({
   maxImageSize: -1,
@@ -247,7 +248,23 @@ class PartialEvaluator {
     this.type3FontRefs = null;
 
     this._regionalImageCache = new RegionalImageCache();
-    this._fetchBuiltInCMapBound = this.fetchBuiltInCMap.bind(this);
+
+    // Integrate with the worker-side FontManager singleton for unified
+    // CMap loading, caching, and fallback tracking.
+    this._workerFontManager = WorkerFontManager.getInstance();
+    // If the manager hasn't been configured yet (e.g. in tests), configure
+    // it with a fetch function that bridges to this evaluator's old logic.
+    if (!this._workerFontManager.isConfigured) {
+      this._workerFontManager.configure({
+        fetchBuiltInCMapFn: name => this._fetchBuiltInCMapDirect(name),
+        fetchStandardFontDataFn: name =>
+          this._fetchStandardFontDataDirect(name),
+        cMapPacked: this.options.cMapPacked,
+      });
+    }
+    // Use the FontManager's fetch function for CMapFactory compatibility.
+    this._fetchBuiltInCMapBound = name =>
+      this._workerFontManager.fetchBuiltInCMap(name);
   }
 
   /**
@@ -388,7 +405,23 @@ class PartialEvaluator {
     return false;
   }
 
+  /**
+   * Fetch built-in CMap data. Routes through the WorkerFontManager for
+   * unified caching, de-duplication, and async loading. Falls back to the
+   * legacy direct-fetch logic for backward compatibility.
+   */
   async fetchBuiltInCMap(name) {
+    if (this._workerFontManager?.isConfigured) {
+      return this._workerFontManager.fetchBuiltInCMap(name);
+    }
+    return this._fetchBuiltInCMapDirect(name);
+  }
+
+  /**
+   * Legacy direct CMap fetch logic (used as the underlying fetch function
+   * by the WorkerFontManager when no external fetcher is configured).
+   */
+  async _fetchBuiltInCMapDirect(name) {
     const cachedData = this.builtInCMapCache.get(name);
     if (cachedData) {
       return cachedData;
@@ -421,6 +454,17 @@ class PartialEvaluator {
   }
 
   async fetchStandardFontData(name) {
+    if (this._workerFontManager?.isConfigured) {
+      const data = await this._workerFontManager.fetchStandardFontData(name);
+      if (data) {
+        return new Stream(data);
+      }
+      return null;
+    }
+    return this._fetchStandardFontDataDirect(name);
+  }
+
+  async _fetchStandardFontDataDirect(name) {
     const cachedData = this.standardFontDataCache.get(name);
     if (cachedData) {
       return new Stream(cachedData);

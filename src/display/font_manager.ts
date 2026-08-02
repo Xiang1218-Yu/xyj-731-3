@@ -37,31 +37,29 @@
  *  - JS-interoperable: callable from existing JavaScript code with no changes.
  */
 
-import type {
-  BinaryDataFetcher,
-  CMapLoadOptions,
-  CMapPreloadStrategy,
-  CMapRawData,
-  CacheStats,
-  FallbackChainResult,
-  FontManagerConfig,
-  FontManagerStats,
-  FontDescriptor,
-  SystemFontInfo,
+import {
+  type BinaryDataFetcher,
+  type CacheStats,
+  type CMapLoadOptions,
+  type CMapPreloadStrategy,
+  type CMapRawData,
+  DEFAULT_FONT_MANAGER_CONFIG,
+  type FallbackChainResult,
+  FallbackLevel,
+  type FontDescriptor,
+  FontEventType,
+  type FontManagerConfig,
+  type FontManagerStats,
+  type SystemFontInfo,
 } from "./font_types.js";
 import {
-  DEFAULT_FONT_MANAGER_CONFIG,
-  FontEventType,
-  FallbackLevel,
-} from "./font_types.js";
+  type FallbackChainParams,
+  FontFailureTracker,
+  FontFallbackChainBuilder,
+} from "./font_fallback_chain.js";
+import { CMapLoader } from "./cmap_loader.js";
 import { FontEventBus } from "./font_event_bus.js";
 import { LRUCache } from "./font_cache.js";
-import { CMapLoader } from "./cmap_loader.js";
-import {
-  FontFallbackChainBuilder,
-  FontFailureTracker,
-  type FallbackChainParams,
-} from "./font_fallback_chain.js";
 
 // ---------------------------------------------------------------------------
 // Font manager entry: tracks a loaded font
@@ -100,7 +98,12 @@ interface ManagedFontEntry {
  * ```ts
  * const mgr = FontManager.getInstance();
  * mgr.configure({
- *   cMap: { cMapUrl: "/cmaps/", cMapPacked: true, preloadStrategy: "cjk", concurrency: 4 },
+ *   cMap: {
+ *     cMapUrl: "/cmaps/",
+ *     cMapPacked: true,
+ *     preloadStrategy: "cjk",
+ *     concurrency: 4,
+ *   },
  *   enableFallbackChain: true,
  *   enableCache: true,
  *   ownerDocument: document,
@@ -115,7 +118,7 @@ interface ManagedFontEntry {
  * await mgr.preloadCMaps("japanese");
  * ```
  */
-export class FontManager {
+class FontManager {
   /** The singleton instance. */
   static #instance: FontManager | undefined;
 
@@ -124,9 +127,7 @@ export class FontManager {
    * Creates it on first call with default configuration.
    */
   static getInstance(): FontManager {
-    if (!FontManager.#instance) {
-      FontManager.#instance = new FontManager();
-    }
+    FontManager.#instance ??= new FontManager();
     return FontManager.#instance;
   }
 
@@ -174,8 +175,11 @@ export class FontManager {
 
   /** Running counters for stats. */
   #totalFontsLoaded = 0;
+
   #totalCMapsLoaded = 0;
+
   #totalFallbacks = 0;
+
   #preloadCount = 0;
 
   /** Whether the manager has been configured. */
@@ -189,7 +193,9 @@ export class FontManager {
     this.eventBus = new FontEventBus();
     this.#config = { ...DEFAULT_FONT_MANAGER_CONFIG };
     this.failureTracker = new FontFailureTracker();
-    this.fallbackChainBuilder = new FontFallbackChainBuilder(this.failureTracker);
+    this.fallbackChainBuilder = new FontFallbackChainBuilder(
+      this.failureTracker
+    );
 
     this.cMapCache = new LRUCache<CMapRawData>(
       {
@@ -386,7 +392,7 @@ export class FontManager {
   /**
    * Create a fetch function compatible with the existing CMapFactory interface.
    *
-   * @returns A function that can be passed as `fetchBuiltInCMap` to CMapFactory.
+   * @returns A function usable as `fetchBuiltInCMap` for CMapFactory.
    */
   createCMapFetchFn(): (name: string) => Promise<CMapRawData> {
     return (name: string) => this.fetchBuiltInCMap(name);
@@ -531,7 +537,7 @@ export class FontManager {
 
     // Find the next fallback level.
     const chain = entry.fallbackChain.chain;
-    const currentIndex = chain.findIndex((e) => e.level === failedLevel);
+    const currentIndex = chain.findIndex(e => e.level === failedLevel);
     if (currentIndex === -1 || currentIndex >= chain.length - 1) {
       this.eventBus.dispatch(FontEventType.FontLoadError, {
         fontName: entry.descriptor.baseFontName,
@@ -710,31 +716,36 @@ export class FontManager {
   }
 }
 
+export { FontManager };
+
+export { CMapLoader } from "./cmap_loader.js";
+export { LRUCache } from "./font_cache.js";
+export { FontEventBus } from "./font_event_bus.js";
+export {
+  FontFailureTracker,
+  FontFallbackChainBuilder,
+} from "./font_fallback_chain.js";
 // Re-export key types and enums for convenience from the main entry point.
 export {
-  FontEventType,
-  FallbackLevel,
   DEFAULT_FONT_MANAGER_CONFIG,
+  FallbackLevel,
+  FontEventType,
 } from "./font_types.js";
 export type {
-  FontManagerConfig,
-  FontManagerStats,
+  BinaryDataFetcher,
+  CacheStats,
   CMapLoadOptions,
   CMapPreloadStrategy,
   CMapRawData,
-  FontDescriptor,
-  SystemFontInfo,
-  FallbackChainResult,
   FallbackChainEntry,
-  FontEventMap,
+  FallbackChainResult,
+  FontDescriptor,
   FontEventListener,
-  CacheStats,
-  BinaryDataFetcher,
+  FontEventMap,
+  FontManagerConfig,
+  FontManagerStats,
   FontStyle,
   FontWeight,
   GenericFontFamily,
+  SystemFontInfo,
 } from "./font_types.js";
-export { FontEventBus } from "./font_event_bus.js";
-export { LRUCache } from "./font_cache.js";
-export { CMapLoader } from "./cmap_loader.js";
-export { FontFallbackChainBuilder, FontFailureTracker } from "./font_fallback_chain.js";

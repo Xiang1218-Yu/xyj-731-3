@@ -41,11 +41,11 @@ import {
   CanvasDependencyTracker,
   CanvasImagesTracker,
 } from "./canvas_dependency_tracker.js";
-import { FontFaceObject, FontLoader } from "./font_loader.js";
 import {
   configureFontManager,
   getFontManager,
 } from "./font_manager_adapter.js";
+import { FontFaceObject, FontLoader } from "./font_loader.js";
 import {
   FontInfo,
   FontPathInfo,
@@ -2429,15 +2429,14 @@ class WorkerTransport {
     this.#networkStream = networkStream;
 
     this.commonObjs = new PDFObjects();
-    this.fontLoader = new FontLoader({
-      ownerDocument: params.ownerDocument,
-      styleElement: params.styleElement,
-    });
 
     // Configure the FontManager singleton with document-level settings.
-    // This unifies CMap loading, font caching, and fallback management.
+    // This unifies CMap loading, font caching, fallback management, and
+    // lifecycle event emission. Must be done before creating the FontLoader
+    // so it can receive the manager instance for event bridging.
+    let fontManager = null;
     if (factory.binaryDataFactory) {
-      configureFontManager({
+      fontManager = configureFontManager({
         cMapUrl: params.cMapUrl,
         cMapPacked: params.cMapPacked,
         standardFontDataUrl: params.standardFontDataUrl,
@@ -2448,7 +2447,13 @@ class WorkerTransport {
         ownerDocument: params.ownerDocument,
       });
     }
-    this.fontManager = getFontManager();
+    this.fontManager = fontManager ?? getFontManager();
+
+    this.fontLoader = new FontLoader({
+      ownerDocument: params.ownerDocument,
+      styleElement: params.styleElement,
+      fontManager: this.fontManager,
+    });
 
     this.enableHWA = params.enableHWA;
     this.loadingParams = params.loadingParams;
@@ -2831,8 +2836,9 @@ class WorkerTransport {
             exportedData.extra
           );
 
-          // Register the font with the FontManager for fallback tracking
-          // and lifecycle event emission.
+          // Register the font with the FontManager for fallback tracking.
+          // Lifecycle events (start/success/error) are emitted by FontLoader
+          // via the FontManager's event bus.
           if (this.fontManager.isConfigured) {
             const sysInfo = font.systemFontInfo;
             const cssInfo = font.cssFontInfo;
@@ -2866,25 +2872,7 @@ class WorkerTransport {
 
           this.fontLoader
             .bind(font)
-            .then(() => {
-              if (this.fontManager.isConfigured) {
-                this.fontManager.recordFontLoadSuccess(
-                  font.loadedName,
-                  0,
-                  false
-                );
-              }
-            })
-            .catch(ex => {
-              if (this.fontManager.isConfigured) {
-                this.fontManager.recordFontLoadFailure(
-                  font.loadedName,
-                  0,
-                  ex instanceof Error ? ex : new Error(String(ex))
-                );
-              }
-              return messageHandler.sendWithPromise("FontFallback", { id });
-            })
+            .catch(() => messageHandler.sendWithPromise("FontFallback", { id }))
             .finally(() => {
               if (!font.fontExtraProperties) {
                 // Immediately release the `font.data` property once the font
