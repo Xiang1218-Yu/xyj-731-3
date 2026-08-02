@@ -52,6 +52,12 @@ import Vinyl from "vinyl";
 import webpack2 from "webpack";
 import webpackStream from "webpack-stream";
 import zip from "gulp-zip";
+import { createRequire } from "module";
+
+const require = createRequire(import.meta.url);
+const BABEL_LOADER = require.resolve("babel-loader");
+const PRESET_ENV = require.resolve("@babel/preset-env");
+const PRESET_TYPESCRIPT = require.resolve("@babel/preset-typescript");
 
 const __dirname = import.meta.dirname;
 
@@ -328,7 +334,9 @@ function createWebpackConfig(
     /node_modules[\\/]core-js/,
   ];
 
-  const babelPresets = skipBabel ? undefined : ["@babel/preset-env"];
+  const babelPresets = skipBabel
+    ? undefined
+    : [PRESET_ENV];
   const babelPlugins = [
     [
       babelPluginPDFJSPreprocessor,
@@ -344,6 +352,9 @@ function createWebpackConfig(
   if (bundleDefines.COVERAGE) {
     babelPlugins.push("babel-plugin-istanbul");
   }
+
+  // Babel config for TypeScript files: only strip types, no env transforms.
+  const tsBabelPresets = skipBabel ? undefined : [PRESET_TYPESCRIPT];
 
   const plugins = [];
   if (!disableLicenseHeader) {
@@ -422,6 +433,11 @@ function createWebpackConfig(
     plugins,
     resolve: {
       alias,
+      extensions: [".ts", ".js", ".mjs"],
+      extensionAlias: {
+        ".js": [".ts", ".js"],
+        ".mjs": [".ts", ".mjs", ".js"],
+      },
     },
     devtool: enableSourceMaps ? "source-map" : undefined,
     module: {
@@ -433,10 +449,27 @@ function createWebpackConfig(
       },
       rules: [
         {
-          test: /\.[mc]?js$/,
-          loader: "babel-loader",
+          test: /\.ts$/,
+          loader: BABEL_LOADER,
           exclude: babelExcludeRegExp,
           options: {
+            babelrc: false,
+            configFile: false,
+            sourceType: "module",
+            presets: [
+              [PRESET_TYPESCRIPT, { ignoreExtensions: true, onlyRemoveTypeImports: true }],
+            ],
+            plugins: babelPlugins,
+          },
+        },
+        {
+          test: /\.[mc]?js$/,
+          loader: BABEL_LOADER,
+          exclude: babelExcludeRegExp,
+          options: {
+            babelrc: false,
+            configFile: false,
+            sourceType: "module",
             presets: babelPresets,
             plugins: babelPlugins,
             targets: BABEL_TARGETS,
@@ -1860,7 +1893,7 @@ function buildLibHelper(bundleDefines, inputStream, outputDir) {
           "babel-plugin-istanbul",
           {
             cwd: __dirname,
-            include: ["external/**/*.js", "src/**/*.js", "web/**/*.js"],
+            include: ["external/**/*.js", "src/**/*.js", "src/**/*.ts", "web/**/*.js"],
           },
         ]);
       }
@@ -1873,7 +1906,9 @@ function buildLibHelper(bundleDefines, inputStream, outputDir) {
           configFile: false,
         }),
         sourceType: "module",
-        presets: skipBabel ? undefined : ["@babel/preset-env"],
+        presets: skipBabel
+          ? undefined
+          : ["@babel/preset-env", "@babel/preset-typescript"],
         plugins,
         targets: BABEL_TARGETS,
         sourceMaps: enableSourceMaps,
@@ -1884,6 +1919,14 @@ function buildLibHelper(bundleDefines, inputStream, outputDir) {
       // Attach the source map to the file for gulp-sourcemaps
       if (result.map) {
         file.sourceMap = result.map;
+      }
+
+      // Rename .ts files to .js in the build output
+      if (file.extname === ".ts") {
+        file.extname = ".js";
+        if (result.map) {
+          result.map.file = file.relative;
+        }
       }
 
       return callback(null, file);
@@ -1922,7 +1965,7 @@ function buildLib(defines, dir) {
   const inputStream = ordered([
     gulp.src(
       [
-        "src/{core,display,shared}/**/*.js",
+        "src/{core,display,shared}/**/*.{js,ts}",
         "src/{pdf,pdf.image_decoders,pdf.worker}.js",
       ],
       { base: "src/", encoding: false, sourcemaps: enableSourceMaps }

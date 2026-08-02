@@ -12,7 +12,12 @@ import unicorn from "eslint-plugin-unicorn";
 
 const jsFiles = folder => {
   const prefix = folder === "." ? "" : folder + "/";
-  return [prefix + "**/*.js", prefix + "**/*.jsm", prefix + "**/*.mjs"];
+  return [
+    prefix + "**/*.js",
+    prefix + "**/*.jsm",
+    prefix + "**/*.mjs",
+    prefix + "**/*.ts",
+  ];
 };
 
 // Include all files referenced in extensions/chromium/background.js
@@ -400,6 +405,13 @@ export default [
       "no-console": "error",
     },
   },
+  {
+    files: ["**/*.ts"],
+    rules: {
+      "import/no-unresolved": "off",
+      "no-unused-vars": "off",
+    },
+  },
 
   /* ======================================================================== *\
                             Test-specific rules
@@ -431,7 +443,18 @@ export default [
   {
     files: jsFiles("test/unit"),
     rules: {
-      "import/no-unresolved": ["error", { ignore: ["pdfjs/"] }],
+      "import/no-unresolved": [
+        "error",
+        {
+          ignore: [
+            "pdfjs/",
+            // FontManager TypeScript modules resolve to .ts at build time.
+            ".*font_.*\\.js$",
+            ".*font_types\\.js$",
+            ".*cmap_loader\\.js$",
+          ],
+        },
+      ],
       "no-console": ["error", { allow: ["warn", "error"] }],
     },
   },
