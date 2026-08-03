@@ -80,6 +80,7 @@ import { bidi } from "./bidi.js";
 import { ColorSpace } from "./colorspace.js";
 import { ColorSpaceUtils } from "./colorspace_utils.js";
 import { compilePatternInfo } from "./obj_bin_transform_core.js";
+import { getFontManagerForEvaluator } from "./font_manager_bridge.js";
 import { getFontSubstitution } from "./font_substitutions.js";
 import { getGlyphsUnicode } from "./glyphlist.js";
 import { getMetrics } from "./metrics.js";
@@ -393,28 +394,19 @@ class PartialEvaluator {
     if (cachedData) {
       return cachedData;
     }
-    let data;
 
-    if (this.options.useWorkerFetch) {
-      // Only compressed CMaps are (currently) supported here.
-      data = {
-        cMapData: await fetchBinaryData(`${this.options.cMapUrl}${name}.bcmap`),
-        isCompressed: true,
-      };
-    } else {
-      if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
-        throw new Error("Only worker-thread fetching supported.");
-      }
-      // Get the data on the main-thread instead.
-      data = {
-        cMapData: await this.handler.sendWithPromise("FetchBinaryData", {
-          kind: "cMapUrl",
-          filename: `${name}${this.options.cMapPacked ? ".bcmap" : ""}`,
-        }),
-        isCompressed: this.options.cMapPacked,
-      };
-    }
-    // Cache the CMap data, to avoid fetching it repeatedly.
+    // Route the request through the unified FontManager.  It provides the
+    // asynchronous, de-duplicated, cache-backed fetching and emits lifecycle
+    // events on its event bus (forwarded to the main thread by the worker
+    // bridge).  The FontManager cache is now the source of truth; the legacy
+    // `builtInCMapCache` is kept populated so existing call sites that consult
+    // it directly continue to work.
+    const manager = getFontManagerForEvaluator({
+      ...this.options,
+      handler: this.handler,
+      fetchBinaryData,
+    });
+    const data = await manager.loadCMap(name);
     this.builtInCMapCache.set(name, data);
 
     return data;
@@ -436,27 +428,25 @@ class PartialEvaluator {
       return null;
     }
 
-    const standardFontNameToFileName = getFontNameToFileMap(),
-      filename = standardFontNameToFileName[name];
-    let data;
+    const filename = getFontNameToFileMap()[name];
+    if (!filename) {
+      return null;
+    }
 
+    const manager = getFontManagerForEvaluator({
+      ...this.options,
+      handler: this.handler,
+      fetchBinaryData,
+    });
+
+    let data;
     try {
-      if (this.options.useWorkerFetch) {
-        data = await fetchBinaryData(
-          `${this.options.standardFontDataUrl}${filename}`
-        );
-      } else {
-        if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
-          throw new Error("Only worker-thread fetching supported.");
-        }
-        // Get the data on the main-thread instead.
-        data = await this.handler.sendWithPromise("FetchBinaryData", {
-          kind: "standardFontDataUrl",
-          filename,
-        });
-      }
+      data = await manager.loadStandardFont(name);
     } catch (ex) {
       warn(ex);
+      return null;
+    }
+    if (!data) {
       return null;
     }
     // Cache the "raw" standard font data, to avoid fetching it repeatedly

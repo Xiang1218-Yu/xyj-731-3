@@ -318,6 +318,25 @@ export class FontManager {
     return this.#cache.getStats();
   }
 
+  /**
+   * Return a cached CMap payload without triggering a fetch, or `undefined`
+   * when nothing is cached for `name`.  This is a read-only peek used by the
+   * legacy cache bridge; normal callers should use {@link loadCMap}.
+   */
+  peekCachedCMap(name: string | CMapName): CMapData | undefined {
+    return this.#cache.get<CMapData>(FontCache.keyFor("cmap", name));
+  }
+
+  /**
+   * Return cached standard-font bytes without triggering a fetch, or
+   * `undefined` when nothing is cached for `name`.
+   */
+  peekCachedStandardFont(name: string | FontName): Uint8Array | undefined {
+    return this.#cache.get<Uint8Array>(
+      FontCache.keyFor("standardFont", name)
+    );
+  }
+
   clearCache(): void {
     this.#cache.clear();
   }
@@ -348,6 +367,21 @@ export class FontManager {
     listener: (payload: FontManagerEventMap[K]) => void
   ): void {
     this.#bus.off(event, listener);
+  }
+
+  /**
+   * Re-emit an event that originated in another thread/context (typically a
+   * font lifecycle event forwarded from the worker over the message channel).
+   *
+   * This is intentionally a distinct method rather than exposing the raw
+   * {@link EventBus}: callers cannot forge arbitrary events, and the event
+   * name is validated against {@link FontManagerEventMap}.
+   */
+  dispatchWorkerEvent<K extends keyof FontManagerEventMap>(
+    event: K,
+    payload: FontManagerEventMap[K]
+  ): void {
+    this.#bus.emit(event, payload);
   }
 
   /* ---------------------------------------------------------------------- */

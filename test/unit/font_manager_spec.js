@@ -32,11 +32,11 @@
  */
 
 import { pathToFileURL } from "node:url";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const buildDir = resolve(__dirname, "../../build/font-manager");
+const __dirname = import.meta.dirname;
+const buildDir = resolve(__dirname, "../../src/shared/font_manager/dist");
+// eslint-disable-next-line no-unsanitized/method
 const mod = await import(pathToFileURL(resolve(buildDir, "index.js")).href);
 
 const {
@@ -305,7 +305,9 @@ describe("FontManager/CMapLoader", function () {
       async fetch(request) {
         active++;
         maxActive = Math.max(maxActive, active);
-        await new Promise(r => setTimeout(r, 5));
+        await new Promise(r => {
+          setTimeout(r, 5);
+        });
         active--;
         return bytes(request.name);
       },
@@ -332,9 +334,7 @@ describe("FontManager/CMapLoader", function () {
       cache,
       hooks: { onLoadError: (name, err) => errors.push([name, err]) },
     });
-    await expectAsync(
-      loader.load(asCMapName("missing"))
-    ).toBeRejected();
+    await expectAsync(loader.load(asCMapName("missing"))).toBeRejected();
     expect(errors.length).toBe(1);
   });
 
@@ -342,7 +342,12 @@ describe("FontManager/CMapLoader", function () {
     const cache = new FontCache();
     let fetches = 0;
     const loader = new CMapLoader({
-      fetcher: { async fetch() { fetches++; return bytes("x"); } },
+      fetcher: {
+        async fetch() {
+          fetches++;
+          return bytes("x");
+        },
+      },
       cMapPacked: true,
       cache,
     });
@@ -414,7 +419,12 @@ describe("FontManager/StandardFontLoader", function () {
     const cache = new FontCache();
     let fetches = 0;
     const loader = new StandardFontLoader({
-      fetcher: { async fetch() { fetches++; return bytes("x"); } },
+      fetcher: {
+        async fetch() {
+          fetches++;
+          return bytes("x");
+        },
+      },
       cache,
     });
     const result = await loader.preload([], 4);
@@ -434,9 +444,7 @@ describe("FontManager/FontFallbackChain", function () {
     const reasons = entries.map(e => e.reason);
     // Priority ordering check.
     for (let i = 1; i < entries.length; i++) {
-      expect(entries[i - 1].priority).toBeLessThanOrEqual(
-        entries[i].priority
-      );
+      expect(entries[i - 1].priority).toBeLessThanOrEqual(entries[i].priority);
     }
     expect(reasons).toContain("alias");
     expect(reasons).toContain("local-match");
@@ -464,9 +472,7 @@ describe("FontManager/FontFallbackChain", function () {
         .withContext(`duplicate candidates for ${name}: ${candidates}`)
         .toBe(candidates.length);
       // The ultimate guarantee must still be present exactly once.
-      const ultimateCount = entries.filter(
-        e => e.reason === "ultimate"
-      ).length;
+      const ultimateCount = entries.filter(e => e.reason === "ultimate").length;
       expect(ultimateCount).toBe(1);
     }
   });
@@ -561,9 +567,9 @@ describe("FontManager/integration", function () {
       responses[name] = bytes(name);
     }
     const manager = FontManager.getInstance();
-    const done = new Promise(resolve =>
-      manager.once("preload:done", resolve)
-    );
+    const done = new Promise(res => {
+      manager.once("preload:done", res);
+    });
     manager.init({
       cMapPacked: true,
       preload: { commonCMaps: true, concurrency: 3 },
@@ -607,5 +613,100 @@ describe("FontManager/integration", function () {
     });
     const data = await manager.loadCMap("GBK-EUC-H");
     expect(new TextDecoder().decode(data.cMapData)).toBe("factory-cmap");
+  });
+});
+
+describe("FontManager/business integration (worker bridge)", function () {
+  let bridge;
+
+  beforeAll(async function () {
+    // eslint-disable-next-line no-unsanitized/method
+    bridge = await import(
+      pathToFileURL(resolve(__dirname, "../../src/core/font_manager_bridge.js"))
+        .href
+    );
+  });
+
+  afterEach(function () {
+    bridge.resetFontManager();
+  });
+
+  it("routes CMap loads through FontManager and caches them", async function () {
+    let fetches = 0;
+    const manager = bridge.getFontManagerForEvaluator({
+      useWorkerFetch: true,
+      cMapUrl: "cmaps/",
+      cMapPacked: true,
+      standardFontDataUrl: "standard_fonts/",
+      fetchBinaryData: async url => {
+        fetches++;
+        return bytes(`data:${url}`);
+      },
+    });
+    const first = await manager.loadCMap("GBK-EUC-H");
+    const second = await manager.loadCMap("GBK-EUC-H");
+    expect(first).toBe(second);
+    expect(fetches).toBe(1);
+    expect(first.isCompressed).toBeTrue();
+    // The cache is actively used: one entry, one hit after the second load.
+    const stats = manager.getCacheStats();
+    expect(stats.entryCount).toBe(1);
+    expect(stats.totalHits).toBeGreaterThan(0);
+  });
+
+  it("forwards lifecycle events through a handler.send-like object", async function () {
+    const sent = [];
+    const handler = {
+      send(name, data) {
+        sent.push([name, data]);
+      },
+    };
+    const manager = bridge.getFontManagerForEvaluator({
+      useWorkerFetch: true,
+      cMapUrl: "cmaps/",
+      cMapPacked: true,
+      standardFontDataUrl: "standard_fonts/",
+      handler,
+      fetchBinaryData: async () => bytes("cmap"),
+    });
+    await manager.loadCMap("ETen-B5-H");
+    const eventNames = sent.map(([n]) => n);
+    expect(eventNames).toContain("FontManagerEvent");
+    const done = sent.find(([, d]) => d.eventName === "resource:load:done");
+    expect(done).toBeTruthy();
+    expect(done[1].payload.name).toBe("ETen-B5-H");
+  });
+});
+
+describe("FontManager/business integration (main-thread client)", function () {
+  let client;
+
+  beforeAll(async function () {
+    // eslint-disable-next-line no-unsanitized/method
+    client = await import(
+      pathToFileURL(
+        resolve(__dirname, "../../src/display/font_manager_client.js")
+      ).href
+    );
+  });
+
+  it("re-dispatches worker events on the main-thread event bus", function () {
+    const manager = client.getMainThreadFontManager();
+    const received = [];
+    const unsubscribe = manager.on("resource:load:done", p => received.push(p));
+    client.dispatchWorkerEvent({
+      eventName: "resource:load:done",
+      payload: {
+        kind: "cmap",
+        name: "UniJIS-UCS2-H",
+        durationMs: 5,
+        size: 42,
+        fromCache: true,
+      },
+    });
+    expect(received.length).toBe(1);
+    expect(received[0].name).toBe("UniJIS-UCS2-H");
+    expect(received[0].fromCache).toBeTrue();
+    unsubscribe();
   });
 });
