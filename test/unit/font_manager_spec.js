@@ -22,12 +22,12 @@ import {
 import {
   FontFailureTracker,
   FontFallbackChainBuilder,
-} from "../../src/display/font_fallback_chain.js";
-import { CMapLoader } from "../../src/display/cmap_loader.js";
-import { FallbackLevel, FontEventType } from "../../src/display/font_types.js";
-import { FontEventBus } from "../../src/display/font_event_bus.js";
-import { FontManager } from "../../src/display/font_manager.js";
-import { LRUCache } from "../../src/display/font_cache.js";
+} from "../../src/shared/font_fallback_chain.js";
+import { CMapLoader } from "../../src/shared/cmap_loader.js";
+import { FallbackLevel, FontEventType } from "../../src/shared/font_types.js";
+import { FontEventBus } from "../../src/shared/font_event_bus.js";
+import { FontManager } from "../../src/shared/font_manager.js";
+import { LRUCache } from "../../src/shared/font_cache.js";
 
 function createMockFetcher() {
   const calls = [];

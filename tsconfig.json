@@ -22,5 +22,5 @@
       "web-null_l10n": ["./web/genericl10n"]
     }
   },
-  "include": ["src/display/font_types.ts", "src/display/font_event_bus.ts", "src/display/font_cache.ts", "src/display/cmap_loader.ts", "src/display/font_fallback_chain.ts", "src/display/font_manager.ts", "src/display/font_manager_adapter.ts"]
+  "include": ["src/shared/font_types.ts", "src/shared/font_event_bus.ts", "src/shared/font_cache.ts", "src/shared/cmap_loader.ts", "src/shared/font_fallback_chain.ts", "src/shared/font_manager.ts", "src/display/font_manager_adapter.ts"]
 }

@@ -30,8 +30,8 @@ import type {
   BinaryDataFetcher,
   CMapPreloadStrategy,
   FontManagerConfig,
-} from "./font_types.js";
-import { FontManager } from "./font_manager.js";
+} from "../shared/font_types.js";
+import { FontManager } from "../shared/font_manager.js";
 
 /**
  * Adapter wrapping an existing BinaryDataFactory (binary_data_factory.js)

@@ -223,21 +223,27 @@ interface CMapCacheEntry {
 
 /**
  * Levels in the font fallback chain, from highest to lowest priority.
+ *
+ * Implemented as a const object (not TypeScript enum) so the code runs
+ * directly in Node.js under --experimental-strip-types without a transform
+ * step, while remaining fully type-safe.
  */
-enum FallbackLevel {
+const FallbackLevel = {
   /** The exact embedded font from the PDF. */
-  Embedded = 0,
+  Embedded: 0,
   /** A direct substitution based on the base font name. */
-  DirectSubstitution = 1,
+  DirectSubstitution: 1,
   /** A standard PDF font (e.g. Helvetica, Times-Roman). */
-  StandardFont = 2,
+  StandardFont: 2,
   /** An OS-local font matched by family name. */
-  SystemFont = 3,
+  SystemFont: 3,
   /** A generic CSS font family (serif, sans-serif, monospace). */
-  GenericFamily = 4,
+  GenericFamily: 4,
   /** The renderer's built-in fallback (canvas rendering). */
-  RendererFallback = 5,
-}
+  RendererFallback: 5,
+} as const;
+
+type FallbackLevel = (typeof FallbackLevel)[keyof typeof FallbackLevel];
 
 /**
  * A single entry in the font fallback chain.
@@ -334,32 +340,38 @@ interface CacheEntry<T> {
 // ---------------------------------------------------------------------------
 
 /**
- * Enumeration of all font lifecycle event types.
+ * All font lifecycle event types.
+ *
+ * Implemented as a const object (not TypeScript enum) so the code runs
+ * directly in Node.js under --experimental-strip-types without a transform
+ * step, while remaining fully type-safe.
  */
-enum FontEventType {
+const FontEventType = {
   /** Fired when a font begins loading. */
-  FontLoadStart = "fontloadstart",
+  FontLoadStart: "fontloadstart",
   /** Fired when a font finishes loading successfully. */
-  FontLoadSuccess = "fontloadsuccess",
+  FontLoadSuccess: "fontloadsuccess",
   /** Fired when a font fails to load. */
-  FontLoadError = "fontloaderror",
+  FontLoadError: "fontloaderror",
   /** Fired when a font fallback is triggered. */
-  FontFallback = "fontfallback",
+  FontFallback: "fontfallback",
   /** Fired when a CMap begins loading. */
-  CMapLoadStart = "cmaploadstart",
+  CMapLoadStart: "cmaploadstart",
   /** Fired when a CMap finishes loading. */
-  CMapLoadSuccess = "cmaploadsuccess",
+  CMapLoadSuccess: "cmaploadsuccess",
   /** Fired when a CMap fails to load. */
-  CMapLoadError = "cmaploaderror",
+  CMapLoadError: "cmaploaderror",
   /** Fired when CMap preloading starts. */
-  CMapPreloadStart = "cmappreloadstart",
+  CMapPreloadStart: "cmappreloadstart",
   /** Fired when CMap preloading completes. */
-  CMapPreloadComplete = "cmappreloadcomplete",
+  CMapPreloadComplete: "cmappreloadcomplete",
   /** Fired when a cache entry is evicted. */
-  CacheEviction = "cacheeviction",
+  CacheEviction: "cacheeviction",
   /** Fired when the manager is destroyed. */
-  ManagerDestroy = "managerdestroy",
-}
+  ManagerDestroy: "managerdestroy",
+} as const;
+
+type FontEventType = (typeof FontEventType)[keyof typeof FontEventType];
 
 /**
  * Payload for font load start event.

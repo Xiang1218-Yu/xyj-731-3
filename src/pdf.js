@@ -100,7 +100,7 @@ import {
   CMapLoader,
   FontFallbackChainBuilder,
   FontFailureTracker,
-} from "./display/font_manager.js";
+} from "./shared/font_manager.js";
 import {
   configureFontManager,
   getFontManager,

@@ -708,4 +708,5 @@ class FontFallbackChainBuilder {
   }
 }
 
-export { FallbackChainParams, FontFailureTracker, FontFallbackChainBuilder };
+export type { FallbackChainParams };
+export { FontFailureTracker, FontFallbackChainBuilder };

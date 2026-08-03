@@ -34,12 +34,12 @@ import { LocalPdfManager, NetworkPdfManager } from "./pdf_manager.js";
 import { MessageHandler, wrapReason } from "../shared/message_handler.js";
 import { AnnotationFactory } from "./annotation.js";
 import { clearGlobalCaches } from "./cleanup_helper.js";
+import { FontManager } from "../shared/font_manager.js";
 import { incrementalUpdate } from "./writer.js";
 import { PDFEditor } from "./editor/pdf_editor.js";
 import { PDFWorkerStream } from "./worker_stream.js";
 import { stringToPDFString } from "./string_utils.js";
 import { StructTreeRoot } from "./struct_tree.js";
-import { WorkerFontManager } from "./worker_font_manager.js";
 
 class WorkerTask {
   constructor(name) {
@@ -198,58 +198,57 @@ class WorkerMessageHandler {
       enableXfa,
       evaluatorOptions,
     }) {
-      // Configure the worker-side FontManager singleton for this document.
-      // This unifies CMap loading with async caching and de-duplication.
-      const workerFontManager = WorkerFontManager.getInstance();
-      workerFontManager.cleanup();
-      workerFontManager.configure({
-        cMapPacked: evaluatorOptions.cMapPacked !== false,
-        fetchBuiltInCMapFn: async name => {
-          // Use worker-thread fetch if enabled, otherwise delegate to
-          // the main thread via the message handler.
-          if (evaluatorOptions.useWorkerFetch) {
+      // Configure the unified FontManager singleton for this document.
+      // CMap loading uses async caching, de-duplication, and concurrency
+      // control; standard font data is cached via the fontDataCache.
+      const fontManager = FontManager.getInstance();
+      fontManager.cleanup();
+
+      const cMapPacked = evaluatorOptions.cMapPacked !== false;
+      const useWorkerFetch = evaluatorOptions.useWorkerFetch;
+      const cMapUrl = evaluatorOptions.cMapUrl;
+      const standardFontDataUrl = evaluatorOptions.standardFontDataUrl;
+
+      const binaryFetcher = {
+        async fetch(kind, filename) {
+          if (useWorkerFetch) {
             const { fetchBinaryData } = await import("./core_utils.js");
-            return {
-              cMapData: await fetchBinaryData(
-                `${evaluatorOptions.cMapUrl}${name}.bcmap`
-              ),
-              isCompressed: true,
-            };
-          }
-          return handler
-            .sendWithPromise("FetchBinaryData", {
-              kind: "cMapUrl",
-              filename: `${name}${evaluatorOptions.cMapPacked ? ".bcmap" : ""}`,
-            })
-            .then(cMapData => ({
-              cMapData,
-              isCompressed: !!evaluatorOptions.cMapPacked,
-            }));
-        },
-        fetchStandardFontDataFn: async name => {
-          const { getFontNameToFileMap } = await import("./standard_fonts.js");
-          const filename = getFontNameToFileMap()[name];
-          if (!filename) {
-            return null;
-          }
-          if (
-            evaluatorOptions.useSystemFonts &&
-            name !== "Symbol" &&
-            name !== "ZapfDingbats"
-          ) {
-            return null;
-          }
-          if (evaluatorOptions.useWorkerFetch) {
-            const { fetchBinaryData } = await import("./core_utils.js");
-            return fetchBinaryData(
-              `${evaluatorOptions.standardFontDataUrl}${filename}`
-            );
+            const baseUrl = kind === "cMapUrl" ? cMapUrl : standardFontDataUrl;
+            return fetchBinaryData(`${baseUrl}${filename}`);
           }
           return handler.sendWithPromise("FetchBinaryData", {
-            kind: "standardFontDataUrl",
+            kind,
             filename,
           });
         },
+      };
+
+      fontManager.configure(
+        {
+          cMap: {
+            cMapUrl,
+            cMapPacked,
+            preloadStrategy: "none",
+            concurrency: 4,
+          },
+        },
+        binaryFetcher
+      );
+
+      fontManager.setStandardFontFetcher(async name => {
+        const { getFontNameToFileMap } = await import("./standard_fonts.js");
+        const filename = getFontNameToFileMap()[name];
+        if (!filename) {
+          return undefined;
+        }
+        if (
+          evaluatorOptions.useSystemFonts &&
+          name !== "Symbol" &&
+          name !== "ZapfDingbats"
+        ) {
+          return undefined;
+        }
+        return binaryFetcher.fetch("standardFontDataUrl", filename);
       });
 
       const pdfManagerArgs = {
@@ -1085,8 +1084,8 @@ class WorkerMessageHandler {
       }
 
       await Promise.all(waitOn);
-      // Clean up the worker-side FontManager.
-      WorkerFontManager.getInstance().cleanup();
+      // Clean up the unified FontManager.
+      FontManager.getInstance().cleanup();
       // Notice that even if we destroying handler, resolved response promise
       // must be sent back.
       handler.destroy();

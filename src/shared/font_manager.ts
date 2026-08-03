@@ -46,6 +46,7 @@ import {
   DEFAULT_FONT_MANAGER_CONFIG,
   type FallbackChainResult,
   FallbackLevel,
+  type FetchStandardFontDataFn,
   type FontDescriptor,
   FontEventType,
   type FontManagerConfig,
@@ -172,6 +173,9 @@ class FontManager {
 
   /** The binary data fetcher. */
   #fetcher: BinaryDataFetcher | undefined;
+
+  /** Fetcher for standard font data (used by core/worker layer). */
+  #standardFontFetcher: FetchStandardFontDataFn | undefined;
 
   /** Running counters for stats. */
   #totalFontsLoaded = 0;
@@ -396,6 +400,44 @@ class FontManager {
    */
   createCMapFetchFn(): (name: string) => Promise<CMapRawData> {
     return (name: string) => this.fetchBuiltInCMap(name);
+  }
+
+  // -------------------------------------------------------------------------
+  // Standard font data
+  // -------------------------------------------------------------------------
+
+  /**
+   * Set the function used to fetch standard font data by name.
+   * This is used primarily by the core/worker layer.
+   *
+   * @param fn - Async function that returns font bytes or undefined.
+   */
+  setStandardFontFetcher(fn: FetchStandardFontDataFn): void {
+    this.#standardFontFetcher = fn;
+  }
+
+  /**
+   * Fetch standard font data by name, with caching.
+   *
+   * @param name - The standard font name (e.g. "Helvetica").
+   * @returns The font bytes, or undefined if unavailable.
+   */
+  async fetchStandardFontData(name: string): Promise<Uint8Array | undefined> {
+    if (!this.#standardFontFetcher) {
+      return undefined;
+    }
+
+    const cacheKey = `stdfont:${name}`;
+    const cached = this.fontDataCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const data = await this.#standardFontFetcher(name);
+    if (data && this.#config.enableCache) {
+      this.fontDataCache.set(cacheKey, data);
+    }
+    return data;
   }
 
   // -------------------------------------------------------------------------
@@ -688,6 +730,7 @@ class FontManager {
 
     this.#cMapLoader = undefined;
     this.#fetcher = undefined;
+    this.#standardFontFetcher = undefined;
     this.#configured = false;
   }
 

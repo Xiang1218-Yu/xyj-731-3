@@ -21,7 +21,7 @@ import {
   unreachable,
   warn,
 } from "../shared/util.js";
-import { FallbackLevel, FontEventType } from "./font_types.js";
+import { FallbackLevel, FontEventType } from "../shared/font_types.js";
 import { makePathFromDrawOPS } from "./display_utils.js";
 
 class FontLoader {
