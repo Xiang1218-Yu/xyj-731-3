@@ -82,6 +82,7 @@ try {
   step("3/3 regression tests", process.execPath, [
     "--test",
     join(here, "test", "font-manager.test.mjs"),
+    join(here, "test", "integration.test.mjs"),
   ]);
   process.stdout.write("\nFontManager regression flow: ALL STEPS PASSED.\n");
 } catch (error) {

@@ -36,6 +36,7 @@
 
 import type {
   BinaryDataFactoryLike,
+  BinaryDataRequest,
   CacheStats,
   CMapLoaderConfig,
   FallbackChain,
@@ -175,6 +176,73 @@ export class FontManager {
     );
     this.#eventBus.dispatch("fontDataLoaded", { filename, fromCache });
     return value;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Transport adapter — the live PDF.js integration seam
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Fetch an arbitrary binary resource (CMap / standard font / wasm) through the
+   * manager's cache + single-flight dedup, delegating the actual byte transfer
+   * to the bound {@link BinaryDataFactoryLike}. This is the unified path the
+   * transport adapter uses so that *every* main-thread resource fetch benefits
+   * from caching and lifecycle events.
+   *
+   * @throws Error when no data factory is bound.
+   */
+  async fetchBinary(request: BinaryDataRequest): Promise<Uint8Array> {
+    if (!this.#factory) {
+      throw new Error(
+        "FontManager has no binary data factory bound; cannot fetch binary data."
+      );
+    }
+    const factory = this.#factory;
+    // Namespace by kind so a CMap and a font sharing a filename cannot collide.
+    const key = `${request.kind}\u0000${request.filename}`;
+    const { value, fromCache } = await this.#cache.getOrCreate(
+      "binary",
+      key,
+      () => factory.fetch(request),
+      (namespace, evictedKey) =>
+        this.#eventBus.dispatch("cacheEvicted", { namespace, key: evictedKey })
+    );
+    this.#eventBus.dispatch("binaryFetched", {
+      kind: request.kind,
+      filename: request.filename,
+      fromCache,
+      byteLength: value.byteLength,
+    });
+    return value;
+  }
+
+  /**
+   * Wrap a *real* PDF.js binary data factory (`DOMBinaryDataFactory` /
+   * `NodeBinaryDataFactory`) and return an object that satisfies the exact same
+   * `fetch({ kind, filename }) => Promise<Uint8Array>` contract — a genuine
+   * drop-in for `transportFactory.binaryDataFactory`.
+   *
+   * Binding here also makes the wrapped factory the manager's active source, so
+   * {@link loadCMap}/{@link loadFontData} share the same underlying transport.
+   * This is how FontManager plugs into the running document pipeline without
+   * changing any caller's option plumbing.
+   */
+  createBinaryDataFactoryAdapter(
+    realFactory: BinaryDataFactoryLike
+  ): BinaryDataFactoryLike {
+    this.bindFactory(realFactory);
+    return {
+      fetch: (request: BinaryDataRequest): Promise<Uint8Array> =>
+        this.fetchBinary(request),
+    };
+  }
+
+  /**
+   * Bind (or replace) the binary data source without a full {@link configure}.
+   * Useful when a transport is created before document options are known.
+   */
+  bindFactory(factory: BinaryDataFactoryLike): void {
+    this.#factory = factory;
   }
 
   // ---------------------------------------------------------------------------

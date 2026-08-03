@@ -193,7 +193,7 @@ export interface FallbackChain {
  * The logical namespaces stored by {@link FontCache}. Each namespace has a
  * distinct value type, enforced by {@link CacheValueMap}.
  */
-export type CacheNamespace = "cmap" | "fontData" | "fallback";
+export type CacheNamespace = "cmap" | "fontData" | "fallback" | "binary";
 
 /**
  * Concrete mapping from a cache namespace to the value type stored under it.
@@ -203,6 +203,13 @@ export interface CacheValueMap {
   cmap: LoadedCMap;
   fontData: Uint8Array;
   fallback: FallbackChain;
+  /**
+   * Raw bytes cached by the transport-level adapter (see
+   * {@link FontManager.createBinaryDataFactoryAdapter}). Keyed by `kind` +
+   * `filename`, this backs the drop-in `BinaryDataFactoryLike` used by the
+   * PDF.js worker-fetch pipeline for CMap / standard-font / wasm resources.
+   */
+  binary: Uint8Array;
 }
 
 /** Runtime statistics exposed for observability & test assertions. */
@@ -233,6 +240,16 @@ export interface FontEventMap {
   fallbackResolved: { readonly requested: string; readonly chain: FallbackChain };
   /** Fired whenever the cache evicts an entry. */
   cacheEvicted: { readonly namespace: CacheNamespace; readonly key: string };
+  /**
+   * Fired after the transport adapter serves a binary resource (CMap / font /
+   * wasm). This is the observability hook for the *live* PDF.js fetch path.
+   */
+  binaryFetched: {
+    readonly kind: BinaryDataKind;
+    readonly filename: string;
+    readonly fromCache: boolean;
+    readonly byteLength: number;
+  };
 }
 
 /** Union of all valid event names. */
