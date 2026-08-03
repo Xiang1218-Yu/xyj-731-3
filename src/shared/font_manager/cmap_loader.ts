@@ -132,7 +132,15 @@ export class CMapLoader {
     try {
       return await request;
     } finally {
-      this.#inFlight.delete(name);
+      // Only delete the in-flight entry when it is still the *same* promise
+      // we registered.  On a fetch failure a different concurrent caller may
+      // have already started a retry (or another `load()` call may have
+      // replaced the entry) by the time this `finally` runs; blindly deleting
+      // by name would then tear down that newer in-flight request and break
+      // de-duplication for its concurrent waiters.
+      if (this.#inFlight.get(name) === request) {
+        this.#inFlight.delete(name);
+      }
     }
   }
 
@@ -152,7 +160,13 @@ export class CMapLoader {
     const queue = names.slice();
     const workers: Array<Promise<void>> = [];
 
-    const workerCount = Math.max(1, Math.min(concurrency, queue.length));
+    // Do not spawn any workers when there is nothing to do; otherwise an
+    // empty input list would still create a no-op worker below.
+    if (queue.length === 0) {
+      return { completed: 0, failed: 0 };
+    }
+
+    const workerCount = Math.min(concurrency, queue.length);
     for (let i = 0; i < workerCount; i++) {
       workers.push(
         (async (): Promise<void> => {

@@ -222,15 +222,20 @@ export class FontFallbackChain {
       if (!candidate) {
         return;
       }
-      // De-duplicate by candidate name for every stage except the ultimate
-      // guarantee.  The ultimate entry is deliberately appended even when
-      // the same name already appeared as a generic family: probing stops
-      // there (so it is functionally identical) but the distinct `reason`
-      // makes the terminal step visible in diagnostics / events.
-      if (reason !== "ultimate") {
-        if (chain.some(e => e.candidate === candidate)) {
-          return;
+      // The chain must never contain two entries with the same candidate
+      // name.  When the ultimate guarantee collides with an earlier entry
+      // (typically the generic family — both resolve to e.g. "serif"), the
+      // ultimate entry *replaces* the earlier one.  This keeps the chain
+      // duplicate-free while still guaranteeing that the terminal entry is
+      // marked `ultimate`, so probing always terminates there and
+      // diagnostics can identify the last-resort candidate.  Any other
+      // duplicate is simply ignored.
+      const existingIndex = chain.findIndex(e => e.candidate === candidate);
+      if (existingIndex !== -1) {
+        if (reason === "ultimate") {
+          chain[existingIndex] = { candidate, reason, priority };
         }
+        return;
       }
       chain.push({ candidate, reason, priority });
     };

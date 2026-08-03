@@ -146,7 +146,11 @@ export class StandardFontLoader {
     try {
       return await request;
     } finally {
-      this.#inFlight.delete(name);
+      // Guard against tearing down a newer in-flight retry registered after
+      // this request settled; see CMapLoader.load for details.
+      if (this.#inFlight.get(name) === request) {
+        this.#inFlight.delete(name);
+      }
     }
   }
 
@@ -158,7 +162,13 @@ export class StandardFontLoader {
     let failed = 0;
     const queue = names.slice();
     const workers: Array<Promise<void>> = [];
-    const workerCount = Math.max(1, Math.min(concurrency, queue.length));
+
+    // Avoid spawning a no-op worker for an empty queue.
+    if (queue.length === 0) {
+      return { completed: 0, failed: 0 };
+    }
+
+    const workerCount = Math.min(concurrency, queue.length);
     for (let i = 0; i < workerCount; i++) {
       workers.push(
         (async (): Promise<void> => {

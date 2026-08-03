@@ -225,10 +225,21 @@ export class FontCache {
       return;
     }
 
+    // Defensive upper bound on the number of eviction iterations.  Each
+    // iteration removes exactly one entry, so under normal circumstances the
+    // loop runs at most `this.#entries.size` times.  The guard protects
+    // against pathological configurations (e.g. a non-positive entry size
+    // that keeps `totalSize` over budget) turning eviction into an infinite
+    // loop that would hang the main/worker thread.
+    const maxIterations = this.#entries.size;
+    let iterations = 0;
+
     while (
-      this.#entries.size > this.#options.maxEntries ||
-      this.#totalSize > this.#options.maxBytes
+      (this.#entries.size > this.#options.maxEntries ||
+        this.#totalSize > this.#options.maxBytes) &&
+      iterations <= maxIterations
     ) {
+      iterations++;
       const victim = this.#selectVictim();
       if (!victim) {
         break;
@@ -238,6 +249,13 @@ export class FontCache {
       this.#totalSize -= victim.size;
       this.#entries.delete(victim.key);
       this.#notifyEvict(victim.key, reason);
+
+      // A non-positive reported size cannot reduce `totalSize`, so further
+      // iterations would never get the cache back under its byte budget.
+      // Stop here rather than spinning through every remaining entry.
+      if (victim.size <= 0) {
+        break;
+      }
     }
   }
 

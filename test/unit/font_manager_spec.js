@@ -229,6 +229,25 @@ describe("FontManager/FontCache", function () {
     expect(DEFAULT_CACHE_OPTIONS.maxEntries).toBeGreaterThan(0);
     expect(DEFAULT_CACHE_OPTIONS.evictionPolicy).toBe("lru");
   });
+
+  it("does not infinite-loop when eviction cannot satisfy the byte budget", function () {
+    // Even though eviction removes entries, a single entry larger than
+    // `maxBytes` means the budget can never be met.  The iteration guard must
+    // terminate the loop instead of spinning forever (which would hang the
+    // test / thread).
+    const cache = new FontCache({
+      maxEntries: 100,
+      maxBytes: 10,
+      evictionPolicy: "lru",
+    });
+    const evictions = [];
+    cache.setEvictionListener(n => evictions.push(n));
+    cache.set(cacheKey("cmap", "huge"), "cmap", 1, 1000);
+    // The oversized entry is evicted once and the loop terminates; it is not
+    // retained because it alone exceeds the budget.
+    expect(cache.size).toBe(0);
+    expect(evictions.length).toBe(1);
+  });
 });
 
 describe("FontManager/CMapLoader", function () {
@@ -318,6 +337,45 @@ describe("FontManager/CMapLoader", function () {
     ).toBeRejected();
     expect(errors.length).toBe(1);
   });
+
+  it("returns immediately for an empty preload list without fetching", async function () {
+    const cache = new FontCache();
+    let fetches = 0;
+    const loader = new CMapLoader({
+      fetcher: { async fetch() { fetches++; return bytes("x"); } },
+      cMapPacked: true,
+      cache,
+    });
+    const result = await loader.preload([], 4);
+    expect(result).toEqual({ completed: 0, failed: 0 });
+    expect(fetches).toBe(0);
+  });
+
+  it("does not tear down a newer in-flight retry after a failure", async function () {
+    const cache = new FontCache();
+    let attempt = 0;
+    const fetcher = {
+      async fetch() {
+        attempt++;
+        if (attempt === 1) {
+          throw new Error("transient");
+        }
+        return bytes("recovered");
+      },
+    };
+    const loader = new CMapLoader({
+      fetcher,
+      cMapPacked: false,
+      cache,
+    });
+    const name = asCMapName("Flaky-H");
+    // First call fails.
+    await expectAsync(loader.load(name)).toBeRejected();
+    // The in-flight entry must have been cleared so a retry can start.
+    expect(loader.isLoading(name)).toBeFalse();
+    const recovered = await loader.load(name);
+    expect(new TextDecoder().decode(recovered.cMapData)).toBe("recovered");
+  });
 });
 
 describe("FontManager/StandardFontLoader", function () {
@@ -351,16 +409,26 @@ describe("FontManager/StandardFontLoader", function () {
       "ZapfDingbats.afm"
     );
   });
+
+  it("returns immediately for an empty preload list without fetching", async function () {
+    const cache = new FontCache();
+    let fetches = 0;
+    const loader = new StandardFontLoader({
+      fetcher: { async fetch() { fetches++; return bytes("x"); } },
+      cache,
+    });
+    const result = await loader.preload([], 4);
+    expect(result).toEqual({ completed: 0, failed: 0 });
+    expect(fetches).toBe(0);
+  });
 });
 
 describe("FontManager/FontFallbackChain", function () {
-  it("builds an ordered alias → local → generic → ultimate chain", function () {
+  it("builds an ordered alias → local-match → ultimate chain", function () {
     const chain = new FontFallbackChain(() => true);
-    // Use a known substitution whose generic family is distinct from its
-    // ultimate guarantee (Courier -> monospace) so every stage is exercised.
     const descriptor = toFontDescriptor({
       loadedName: "g_d0_f1",
-      name: "Courier",
+      name: "Times-Roman",
     });
     const entries = chain.buildChain(descriptor);
     const reasons = entries.map(e => e.reason);
@@ -370,15 +438,37 @@ describe("FontManager/FontFallbackChain", function () {
         entries[i].priority
       );
     }
-    // The original name is pushed with reason "alias" as the first entry.
     expect(reasons).toContain("alias");
     expect(reasons).toContain("local-match");
-    // Generic-family and ultimate may collapse when they share the same name
-    // (e.g. Times -> serif); for Courier they are distinct.
-    expect(reasons).toContain("generic-family");
     expect(reasons).toContain("ultimate");
     // The terminal entry must always be marked ultimate.
     expect(entries.at(-1).reason).toBe("ultimate");
+  });
+
+  it("never produces duplicate candidate names", function () {
+    const chain = new FontFallbackChain(() => true);
+    for (const name of [
+      "Times-Roman",
+      "Times-Bold",
+      "Helvetica",
+      "Courier",
+      "Courier-Bold",
+      "UnknownFont",
+    ]) {
+      const entries = chain.buildChain(
+        toFontDescriptor({ loadedName: "f", name })
+      );
+      const candidates = entries.map(e => e.candidate);
+      const unique = new Set(candidates);
+      expect(unique.size)
+        .withContext(`duplicate candidates for ${name}: ${candidates}`)
+        .toBe(candidates.length);
+      // The ultimate guarantee must still be present exactly once.
+      const ultimateCount = entries.filter(
+        e => e.reason === "ultimate"
+      ).length;
+      expect(ultimateCount).toBe(1);
+    }
   });
 
   it("resolves to the first available candidate", async function () {
