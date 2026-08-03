@@ -41,6 +41,10 @@ import {
   CanvasDependencyTracker,
   CanvasImagesTracker,
 } from "./canvas_dependency_tracker.js";
+import {
+  dispatchWorkerEvent as dispatchFontManagerEvent,
+  getMainThreadFontManager,
+} from "./font_manager_client.js";
 import { FontFaceObject, FontLoader } from "./font_loader.js";
 import {
   FontInfo,
@@ -548,6 +552,26 @@ class PDFDocumentLoadingTask {
    */
   get promise() {
     return this._capability.promise;
+  }
+
+  /**
+   * The main-thread {@link FontManager} singleton for this loading task.
+   * Business / viewer code can subscribe to font lifecycle events here, for
+   * example:
+   *
+   * ```js
+   * const task = getDocument({ url });
+   * task.fontManager.on("resource:load:done", ({ kind, name, durationMs }) => {
+   *   console.log(`loaded ${kind}:${name} in ${durationMs}ms`);
+   * });
+   * ```
+   *
+   * The FontManager is available immediately (before the document promise
+   * resolves) so listeners do not miss early events.
+   * @type {FontManager}
+   */
+  get fontManager() {
+    return getMainThreadFontManager();
   }
 
   /**
@@ -2426,6 +2450,10 @@ class WorkerTransport {
       ownerDocument: params.ownerDocument,
       styleElement: params.styleElement,
     });
+    // The main-thread FontManager exposes the font lifecycle event bus that
+    // viewer / business code subscribes to.  Resource fetching itself happens
+    // in the worker; events are forwarded via `FontManagerEvent` messages.
+    this.fontManager = getMainThreadFontManager();
     this.enableHWA = params.enableHWA;
     this.loadingParams = params.loadingParams;
     this._params = params;
@@ -2905,6 +2933,18 @@ class WorkerTransport {
         return this.binaryDataFactory.fetch(data);
       });
     }
+
+    // Font lifecycle events (CMap/standard-font loads, fallbacks, cache
+    // evictions, ...) are forwarded from the worker.  Re-dispatch them on
+    // the main-thread FontManager event bus so viewer/business code can
+    // subscribe via `pdfDocument.loadingTask.fontManager` /
+    // `transport.fontManager.on(...)`.
+    messageHandler.on("FontManagerEvent", data => {
+      if (this.destroyed) {
+        return;
+      }
+      dispatchFontManagerEvent(data);
+    });
   }
 
   getData() {

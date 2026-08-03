@@ -68,6 +68,7 @@ import {
 import { LinkTarget, PDFLinkService } from "./pdf_link_service.js";
 import { AltTextManager } from "web-alt_text_manager";
 import { AnnotationEditorParams } from "web-annotation_editor_params";
+import { bindFontLifecycle } from "./font_manager_integration.js";
 import { CaretBrowsingMode } from "./caret_browsing.js";
 import { CommentManager } from "./comment_manager.js";
 import { DownloadManager } from "web-download_manager";
@@ -424,6 +425,12 @@ const PDFViewerApplication = {
           )
         : new EventBus();
     this.eventBus = AppOptions.eventBus = eventBus;
+
+    // Bridge the FontManager lifecycle events (emitted by the worker and
+    // forwarded to the main-thread FontManager) into the viewer event bus so
+    // UI / business code can observe CMap & standard-font loading, font
+    // fallbacks and cache utilisation.
+    this._fontLifecycleBindings = bindFontLifecycle(eventBus);
 
     mlManager?.setEventBus(eventBus, abortSignal);
 
