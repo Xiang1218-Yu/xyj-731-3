@@ -70,5 +70,9 @@
   "engines": {
     "node": ">=22.13.0 || >=24"
   },
+  "scripts": {
+    "build:font-manager": "tsc -p src/shared/font_manager/tsconfig.json",
+    "test:font-manager": "tsc -p src/shared/font_manager/tsconfig.json && jasmine --config=test/unit/font_manager.jasmine.json"
+  },
   "license": "Apache-2.0"
 }
