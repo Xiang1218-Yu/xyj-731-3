@@ -80,6 +80,7 @@ import { bidi } from "./bidi.js";
 import { ColorSpace } from "./colorspace.js";
 import { ColorSpaceUtils } from "./colorspace_utils.js";
 import { compilePatternInfo } from "./obj_bin_transform_core.js";
+import { FontManager } from "../shared/font_manager.js";
 import { getFontSubstitution } from "./font_substitutions.js";
 import { getGlyphsUnicode } from "./glyphlist.js";
 import { getMetrics } from "./metrics.js";
@@ -247,7 +248,66 @@ class PartialEvaluator {
     this.type3FontRefs = null;
 
     this._regionalImageCache = new RegionalImageCache();
-    this._fetchBuiltInCMapBound = this.fetchBuiltInCMap.bind(this);
+
+    // Integrate with the unified FontManager singleton for CMap loading,
+    // caching, and standard font data fetching.
+    this._fontManager = FontManager.getInstance();
+    if (!this._fontManager.isConfigured) {
+      const { cMapUrl, cMapPacked, useWorkerFetch, standardFontDataUrl } =
+        this.options;
+      const msgHandler = this.handler;
+
+      const fetcher = {
+        async fetch(kind, filename) {
+          if (useWorkerFetch) {
+            const baseUrl = kind === "cMapUrl" ? cMapUrl : standardFontDataUrl;
+            return fetchBinaryData(`${baseUrl}${filename}`);
+          }
+          if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
+            throw new Error("Only worker-thread fetching supported.");
+          }
+          return msgHandler.sendWithPromise("FetchBinaryData", {
+            kind,
+            filename,
+          });
+        },
+      };
+
+      this._fontManager.configure(
+        {
+          cMap: {
+            cMapUrl,
+            cMapPacked: cMapPacked !== false,
+            preloadStrategy: "none",
+            concurrency: 4,
+          },
+        },
+        fetcher
+      );
+
+      this._fontManager.setStandardFontFetcher(async name => {
+        if (
+          this.options.useSystemFonts &&
+          name !== "Symbol" &&
+          name !== "ZapfDingbats"
+        ) {
+          return undefined;
+        }
+        const filename = getFontNameToFileMap()[name];
+        if (!filename) {
+          return undefined;
+        }
+        try {
+          return await fetcher.fetch("standardFontDataUrl", filename);
+        } catch (ex) {
+          warn(ex);
+          return undefined;
+        }
+      });
+    }
+
+    this._fetchBuiltInCMapBound = name =>
+      this._fontManager.fetchBuiltInCMap(name);
   }
 
   /**
@@ -388,82 +448,29 @@ class PartialEvaluator {
     return false;
   }
 
+  /**
+   * Fetch built-in CMap data through the unified FontManager, which provides
+   * async caching, de-duplication, and concurrency control.
+   */
   async fetchBuiltInCMap(name) {
-    const cachedData = this.builtInCMapCache.get(name);
-    if (cachedData) {
-      return cachedData;
-    }
-    let data;
-
-    if (this.options.useWorkerFetch) {
-      // Only compressed CMaps are (currently) supported here.
-      data = {
-        cMapData: await fetchBinaryData(`${this.options.cMapUrl}${name}.bcmap`),
-        isCompressed: true,
-      };
-    } else {
-      if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
-        throw new Error("Only worker-thread fetching supported.");
-      }
-      // Get the data on the main-thread instead.
-      data = {
-        cMapData: await this.handler.sendWithPromise("FetchBinaryData", {
-          kind: "cMapUrl",
-          filename: `${name}${this.options.cMapPacked ? ".bcmap" : ""}`,
-        }),
-        isCompressed: this.options.cMapPacked,
-      };
-    }
-    // Cache the CMap data, to avoid fetching it repeatedly.
-    this.builtInCMapCache.set(name, data);
-
-    return data;
+    return this._fontManager.fetchBuiltInCMap(name);
   }
 
+  /**
+   * Fetch standard font data through the unified FontManager, which caches
+   * raw bytes to avoid repeated network/main-thread round-trips.
+   */
   async fetchStandardFontData(name) {
-    const cachedData = this.standardFontDataCache.get(name);
-    if (cachedData) {
-      return new Stream(cachedData);
+    const cached = this.standardFontDataCache.get(name);
+    if (cached) {
+      return new Stream(cached);
     }
-
-    // The symbol fonts are not consistent across platforms, always load the
-    // standard font data for them.
-    if (
-      this.options.useSystemFonts &&
-      name !== "Symbol" &&
-      name !== "ZapfDingbats"
-    ) {
-      return null;
+    const data = await this._fontManager.fetchStandardFontData(name);
+    if (data) {
+      this.standardFontDataCache.set(name, data);
+      return new Stream(data);
     }
-
-    const standardFontNameToFileName = getFontNameToFileMap(),
-      filename = standardFontNameToFileName[name];
-    let data;
-
-    try {
-      if (this.options.useWorkerFetch) {
-        data = await fetchBinaryData(
-          `${this.options.standardFontDataUrl}${filename}`
-        );
-      } else {
-        if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
-          throw new Error("Only worker-thread fetching supported.");
-        }
-        // Get the data on the main-thread instead.
-        data = await this.handler.sendWithPromise("FetchBinaryData", {
-          kind: "standardFontDataUrl",
-          filename,
-        });
-      }
-    } catch (ex) {
-      warn(ex);
-      return null;
-    }
-    // Cache the "raw" standard font data, to avoid fetching it repeatedly
-    // (see e.g. issue 11399).
-    this.standardFontDataCache.set(name, data);
-
-    return new Stream(data);
+    return null;
   }
 
   async buildFormXObject(

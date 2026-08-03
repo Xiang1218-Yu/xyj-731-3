@@ -17,12 +17,15 @@
 //              should NOT be used in production environments.
 
 import * as babel from "@babel/core";
+import { createRequire } from "module";
 import fs from "fs";
 import fsPromises from "fs/promises";
 import http from "http";
 import path from "path";
-import { pathToFileURL } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import { WebSocketServer } from "ws";
+
+const require = createRequire(import.meta.url);
 
 const MIME_TYPES = {
   ".css": "text/css",
@@ -135,6 +138,22 @@ class WebServer {
         response.writeHead(400);
         response.end("Bad request", "utf8");
         return;
+      }
+
+      // Dev-only: when a `.js` file is not found on disk, check for a
+      // corresponding `.ts` source file and transpile it on the fly with
+      // Babel + TypeScript preset. This enables the browser dev server to
+      // serve TypeScript sources directly without a build step.
+      if (url.pathname.endsWith(".js")) {
+        const jsPath = fileURLToPath(localURL);
+        const tsPath = jsPath.slice(0, -3) + ".ts";
+        try {
+          await fsPromises.access(tsPath);
+          await this.#serveTranspiledTypeScript(response, tsPath, url);
+          return;
+        } catch {
+          // No .ts file either; fall through to 404.
+        }
       }
 
       response.writeHead(404);
@@ -407,6 +426,41 @@ class WebServer {
     }
     response.writeHead(206);
     stream.pipe(response);
+  }
+
+  async #serveTranspiledTypeScript(response, tsPath, url) {
+    const content = await fsPromises.readFile(tsPath, "utf8");
+
+    const result = babel.transformSync(content, {
+      filename: tsPath,
+      presets: [
+        [
+          require.resolve("@babel/preset-typescript"),
+          { ignoreExtensions: true, onlyRemoveTypeImports: true },
+        ],
+      ],
+      sourceMaps: "inline",
+      sourceFileName: path.basename(tsPath),
+    });
+
+    const code = result.code;
+    const size = Buffer.byteLength(code, "utf8");
+
+    response.setHeader("Content-Type", "application/javascript");
+    response.setHeader("Content-Length", size);
+    if (this.cacheExpirationTime > 0) {
+      const expireTime = new Date();
+      expireTime.setSeconds(
+        expireTime.getSeconds() + this.cacheExpirationTime
+      );
+      response.setHeader("Expires", expireTime.toUTCString());
+    }
+    response.writeHead(200);
+    response.end(code, "utf8");
+
+    if (this.verbose) {
+      console.log(`${url.pathname} -> ${path.basename(tsPath)} (transpiled)`);
+    }
   }
 
   #getContentType(fileURL) {

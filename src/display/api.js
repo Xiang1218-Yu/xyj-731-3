@@ -41,6 +41,10 @@ import {
   CanvasDependencyTracker,
   CanvasImagesTracker,
 } from "./canvas_dependency_tracker.js";
+import {
+  configureFontManager,
+  getFontManager,
+} from "./font_manager_adapter.js";
 import { FontFaceObject, FontLoader } from "./font_loader.js";
 import {
   FontInfo,
@@ -395,6 +399,9 @@ function getDocument(src = {}) {
     pdfBug,
     styleElement,
     enableHWA,
+    cMapUrl,
+    cMapPacked,
+    standardFontDataUrl,
     loadingParams: {
       disableAutoFetch,
       enableXfa,
@@ -2422,10 +2429,32 @@ class WorkerTransport {
     this.#networkStream = networkStream;
 
     this.commonObjs = new PDFObjects();
+
+    // Configure the FontManager singleton with document-level settings.
+    // This unifies CMap loading, font caching, fallback management, and
+    // lifecycle event emission. Must be done before creating the FontLoader
+    // so it can receive the manager instance for event bridging.
+    let fontManager = null;
+    if (factory.binaryDataFactory) {
+      fontManager = configureFontManager({
+        cMapUrl: params.cMapUrl,
+        cMapPacked: params.cMapPacked,
+        standardFontDataUrl: params.standardFontDataUrl,
+        cMapPreloadStrategy: "auto",
+        enableFallbackChain: true,
+        enableCache: true,
+        binaryDataFactory: factory.binaryDataFactory,
+        ownerDocument: params.ownerDocument,
+      });
+    }
+    this.fontManager = fontManager ?? getFontManager();
+
     this.fontLoader = new FontLoader({
       ownerDocument: params.ownerDocument,
       styleElement: params.styleElement,
+      fontManager: this.fontManager,
     });
+
     this.enableHWA = params.enableHWA;
     this.loadingParams = params.loadingParams;
     this._params = params;
@@ -2595,6 +2624,7 @@ class WorkerTransport {
     Promise.all(waitOn).then(() => {
       this.commonObjs.clear();
       this.fontLoader.clear();
+      this.fontManager.cleanup();
       this.#methodPromises.clear();
       this.filterFactory.destroy();
       TextLayer.cleanup();
@@ -2806,6 +2836,40 @@ class WorkerTransport {
             exportedData.extra
           );
 
+          // Register the font with the FontManager for fallback tracking.
+          // Lifecycle events (start/success/error) are emitted by FontLoader
+          // via the FontManager's event bus.
+          if (this.fontManager.isConfigured) {
+            const sysInfo = font.systemFontInfo;
+            const cssInfo = font.cssFontInfo;
+            this.fontManager.registerFont({
+              loadedName: font.loadedName,
+              baseFontName: font.name || "",
+              standardFontName: font.fallbackName || undefined,
+              subtype: exportedData.extra?.subtype || "",
+              vertical: !!font.vertical,
+              missingFile: !!font.missingFile,
+              disableFontFace: !!font.disableFontFace,
+              cssFontInfo: cssInfo
+                ? {
+                    fontFamily: cssInfo.fontFamily,
+                    fontWeight: cssInfo.fontWeight,
+                    italicAngle: cssInfo.italicAngle
+                      ? Number.parseFloat(cssInfo.italicAngle)
+                      : undefined,
+                  }
+                : undefined,
+              systemFontInfo: sysInfo
+                ? {
+                    css: sysInfo.css,
+                    src: sysInfo.src,
+                    style: sysInfo.style,
+                    guessFallback: sysInfo.guessFallback,
+                  }
+                : undefined,
+            });
+          }
+
           this.fontLoader
             .bind(font)
             .catch(() => messageHandler.sendWithPromise("FontFallback", { id }))
@@ -2901,6 +2965,21 @@ class WorkerTransport {
           throw new Error(
             "`BinaryDataFactory` not initialized, see the `useWorkerFetch` parameter."
           );
+        }
+        // For CMap requests, check the FontManager's cache first to avoid
+        // redundant network fetches. This supports async on-demand loading
+        // and preloaded CMaps.
+        if (
+          data.kind === "cMapUrl" &&
+          this.fontManager.isConfigured &&
+          this.fontManager.isCMapCached(data.filename.replace(/\.bcmap$/, ""))
+        ) {
+          const cached = this.fontManager.cMapCache.get(
+            data.filename.replace(/\.bcmap$/, "")
+          );
+          if (cached) {
+            return cached.cMapData;
+          }
         }
         return this.binaryDataFactory.fetch(data);
       });

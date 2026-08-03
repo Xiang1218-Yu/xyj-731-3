@@ -21,6 +21,7 @@ import {
   unreachable,
   warn,
 } from "../shared/util.js";
+import { FallbackLevel, FontEventType } from "../shared/font_types.js";
 import { makePathFromDrawOPS } from "./display_utils.js";
 
 class FontLoader {
@@ -28,9 +29,12 @@ class FontLoader {
 
   #styleSheet = null;
 
+  #fontManager = null;
+
   constructor({
     ownerDocument = globalThis.document,
     styleElement = null, // For testing only.
+    fontManager = null,
   }) {
     this._document = ownerDocument;
 
@@ -39,6 +43,11 @@ class FontLoader {
       typeof PDFJSDev === "undefined" || PDFJSDev.test("TESTING")
         ? styleElement
         : null;
+
+    // Bridge to the FontManager singleton for event emission and caching.
+    // If provided, font load start/success/error events are dispatched
+    // through the manager's typed event bus.
+    this.#fontManager = fontManager;
 
     if (typeof PDFJSDev === "undefined" || !PDFJSDev.test("MOZCENTRAL")) {
       this.loadingRequests = [];
@@ -158,44 +167,90 @@ class FontLoader {
     }
     font.attached = true;
 
-    if (font.systemFontInfo) {
-      await this.loadSystemFont(font);
-      return;
+    const startTime = Date.now();
+    const eventBus = this.#fontManager?.eventBus;
+
+    // Emit font load start event.
+    if (eventBus) {
+      eventBus.dispatch(FontEventType.FontLoadStart, {
+        fontName: font.name || "",
+        loadedName: font.loadedName,
+        timestamp: startTime,
+      });
     }
 
-    if (this.isFontLoadingAPISupported) {
-      const nativeFontFace = font.createNativeFontFace();
-      if (nativeFontFace) {
-        this.addNativeFontFace(nativeFontFace);
-        try {
-          await nativeFontFace.loaded;
-        } catch (ex) {
-          warn(`Failed to load font '${nativeFontFace.family}': '${ex}'.`);
+    try {
+      if (font.systemFontInfo) {
+        await this.loadSystemFont(font);
+      } else if (this.isFontLoadingAPISupported) {
+        const nativeFontFace = font.createNativeFontFace();
+        if (nativeFontFace) {
+          this.addNativeFontFace(nativeFontFace);
+          try {
+            await nativeFontFace.loaded;
+          } catch (ex) {
+            warn(`Failed to load font '${nativeFontFace.family}': '${ex}'.`);
 
-          // When font loading failed, fall back to the built-in font renderer.
-          font.disableFontFace = true;
-          throw ex;
+            // On failure, fall back to the built-in font renderer.
+            font.disableFontFace = true;
+            throw ex;
+          }
+        }
+      } else {
+        // !this.isFontLoadingAPISupported
+        const rule = font.createFontFaceRule();
+        if (rule) {
+          this.insertRule(rule);
+
+          if (this.isSyncFontLoadingSupported) {
+            // The font was, synchronously, loaded.
+          } else {
+            if (
+              typeof PDFJSDev !== "undefined" &&
+              PDFJSDev.test("MOZCENTRAL")
+            ) {
+              throw new Error("Not implemented: async font loading");
+            }
+            await new Promise(resolve => {
+              const request = this._queueLoadingCallback(resolve);
+              this._prepareFontLoadEvent(font, request);
+            });
+            // The font was, asynchronously, loaded.
+          }
         }
       }
-      return; // The font was, asynchronously, loaded.
-    }
 
-    // !this.isFontLoadingAPISupported
-    const rule = font.createFontFaceRule();
-    if (rule) {
-      this.insertRule(rule);
-
-      if (this.isSyncFontLoadingSupported) {
-        return; // The font was, synchronously, loaded.
+      // Emit font load success event.
+      if (eventBus) {
+        this.#fontManager?.recordFontLoadSuccess?.(
+          font.loadedName,
+          FallbackLevel.Embedded,
+          false
+        );
+        eventBus.dispatch(FontEventType.FontLoadSuccess, {
+          fontName: font.name || "",
+          loadedName: font.loadedName,
+          loadTimeMs: Date.now() - startTime,
+          fromCache: false,
+        });
       }
-      if (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) {
-        throw new Error("Not implemented: async font loading");
+    } catch (ex) {
+      // Emit font load error event.
+      if (eventBus) {
+        const error = ex instanceof Error ? ex : new Error(String(ex));
+        this.#fontManager?.recordFontLoadFailure?.(
+          font.loadedName,
+          FallbackLevel.Embedded,
+          error
+        );
+        eventBus.dispatch(FontEventType.FontLoadError, {
+          fontName: font.name || "",
+          loadedName: font.loadedName,
+          error,
+          fallbackLevel: FallbackLevel.RendererFallback,
+        });
       }
-      await new Promise(resolve => {
-        const request = this._queueLoadingCallback(resolve);
-        this._prepareFontLoadEvent(font, request);
-      });
-      // The font was, asynchronously, loaded.
+      throw ex;
     }
   }
 

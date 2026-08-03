@@ -9,10 +9,16 @@ import preferMathClamp from "./external/eslint_plugins/prefer-math-clamp.mjs";
 import prettierRecommended from "eslint-plugin-prettier/recommended";
 import regexpPlugin from "eslint-plugin-regexp";
 import unicorn from "eslint-plugin-unicorn";
+import tsParser from "@typescript-eslint/parser";
 
 const jsFiles = folder => {
   const prefix = folder === "." ? "" : folder + "/";
-  return [prefix + "**/*.js", prefix + "**/*.jsm", prefix + "**/*.mjs"];
+  return [
+    prefix + "**/*.js",
+    prefix + "**/*.jsm",
+    prefix + "**/*.mjs",
+    prefix + "**/*.ts",
+  ];
 };
 
 // Include all files referenced in extensions/chromium/background.js
@@ -144,6 +150,14 @@ export default [
             "stylelint",
             // See https://github.com/firebase/firebase-admin-node/discussions/1359.
             "eslint-plugin-perfectionist",
+            // TypeScript font modules resolve to .ts at build time.
+            "font_types\\.js$",
+            "font_manager\\.js$",
+            "font_event_bus\\.js$",
+            "font_cache\\.js$",
+            "cmap_loader\\.js$",
+            "font_fallback_chain\\.js$",
+            "font_manager_adapter\\.js$",
           ],
         },
       ],
@@ -400,6 +414,21 @@ export default [
       "no-console": "error",
     },
   },
+  {
+    files: ["**/*.ts"],
+    languageOptions: {
+      parser: tsParser,
+      parserOptions: {
+        ecmaVersion: 2025,
+        sourceType: "module",
+      },
+    },
+    rules: {
+      "import/no-unresolved": "off",
+      "no-unused-vars": "off",
+      "no-redeclare": "off",
+    },
+  },
 
   /* ======================================================================== *\
                             Test-specific rules
@@ -431,7 +460,18 @@ export default [
   {
     files: jsFiles("test/unit"),
     rules: {
-      "import/no-unresolved": ["error", { ignore: ["pdfjs/"] }],
+      "import/no-unresolved": [
+        "error",
+        {
+          ignore: [
+            "pdfjs/",
+            // FontManager TypeScript modules resolve to .ts at build time.
+            ".*font_.*\\.js$",
+            ".*font_types\\.js$",
+            ".*cmap_loader\\.js$",
+          ],
+        },
+      ],
       "no-console": ["error", { allow: ["warn", "error"] }],
     },
   },
