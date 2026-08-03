@@ -67,6 +67,7 @@ import {
   NodeFilterFactory,
 } from "display-node_utils";
 import { CanvasGraphics } from "./canvas.js";
+import { createFontManagedBinaryDataFactory } from "./font_manager_integration.js";
 import { DOMBinaryDataFactory } from "display-binary_data_factory";
 import { DOMCanvasFactory } from "./canvas_factory.js";
 import { DOMFilterFactory } from "./filter_factory.js";
@@ -214,6 +215,11 @@ const RENDERING_CANCELLED_TIMEOUT = 100; // ms
  *   falling back to reading built-in CMap files, standard font files,
  *   and wasm files in the main-thread.
  *   The default value is {DOMBinaryDataFactory}.
+ * @property {boolean} [enableFontManager] - When `true`, main-thread fetches of
+ *   built-in CMap, standard font, and wasm files are routed through the unified
+ *   `FontManager` (adding an LRU cache, single-flight request de-duplication,
+ *   and lifecycle events). Purely additive: the underlying `BinaryDataFactory`
+ *   is still used for the actual byte transfer. The default value is `false`.
  * @property {boolean} [enableHWA] - Enables hardware acceleration for
  *   rendering. The default value is `false`.
  * @property {Object} [pagesMapper] - The pages mapper that will be used to map
@@ -339,14 +345,28 @@ function getDocument(src = {}) {
 
   // Ensure that the various factories can be initialized, when necessary,
   // since the user may provide *custom* ones.
+  // The main-thread binary data factory reads built-in CMap / standard font /
+  // wasm files when they aren't fetched inside the worker.
+  let binaryDataFactory =
+    (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) ||
+    useWorkerFetch
+      ? null
+      : new BinaryDataFactory({ cMapUrl, standardFontDataUrl, wasmUrl });
+  // Opt-in: route those fetches through the unified FontManager for caching,
+  // request de-duplication, and lifecycle events. Purely additive — the real
+  // factory above still performs the byte transfer.
+  if (binaryDataFactory && src.enableFontManager === true) {
+    binaryDataFactory = createFontManagedBinaryDataFactory(binaryDataFactory, {
+      cMapUrl,
+      cMapPacked,
+      standardFontDataUrl,
+    });
+  }
+
   const transportFactory = {
     canvasFactory: new CanvasFactory({ ownerDocument, enableHWA }),
     filterFactory: new FilterFactory({ docId, ownerDocument }),
-    binaryDataFactory:
-      (typeof PDFJSDev !== "undefined" && PDFJSDev.test("MOZCENTRAL")) ||
-      useWorkerFetch
-        ? null
-        : new BinaryDataFactory({ cMapUrl, standardFontDataUrl, wasmUrl }),
+    binaryDataFactory,
   };
 
   if (!worker) {

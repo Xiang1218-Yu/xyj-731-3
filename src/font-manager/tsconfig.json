@@ -1,0 +1,47 @@
+{
+  // ---------------------------------------------------------------------------
+  // Strict TypeScript configuration for the FontManager subsystem.
+  //
+  // Goals encoded here:
+  //  * `strict` + `noImplicitAny` + `exactOptionalPropertyTypes` guarantee that
+  //    no implicit/explicit `any` slips through (see also the ESLint-free lint
+  //    check performed by `check-no-any.mjs`).
+  //  * `declaration` emits `.d.ts` files so *plain JavaScript* callers get full
+  //    IntelliSense/type-safety when importing the compiled output.
+  //  * `module`/`target` are aligned with the repo (ES2022, ESM) so the emitted
+  //    JS can be consumed by the existing webpack/babel pipeline unchanged.
+  // ---------------------------------------------------------------------------
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+
+    // Emit JS + type declarations next to the compiled sources.
+    "outDir": "./dist",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+
+    // JS interop: allow the emitted code to be imported from `.js` files and let
+    // TS type-check any JavaScript that imports us.
+    "allowJs": true,
+    "checkJs": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+
+    // The strictness knobs that enforce "no any" and "concrete mappings".
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "useUnknownInCatchVariables": true,
+    "skipLibCheck": true
+  },
+  "include": ["./**/*.ts"],
+  "exclude": ["./dist"]
+}
